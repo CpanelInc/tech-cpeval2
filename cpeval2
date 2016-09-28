@@ -127,7 +127,7 @@ use POSIX qw( strftime );
 use Term::ANSIColor qw(:constants);
 $Term::ANSIColor::AUTORESET = 1;
 
-my $version = '1.33';
+my $version = '1.34';
 
 my $opts = opts_get();
 
@@ -462,9 +462,9 @@ sub check_trueuserdomains {
         if ( $opts->{'updateuserdomains'} or !$skip_update ) {
             print "${tud} doesn't exist, is more than ${max_age} minutes old, or you forced an update.\n";
             print "\nDownloading and running updateuserdomains-universal via curl...\n";
-            if ( system( 'curl -s ' . $uudu . ' | perl' ) != 0 ) {
+            if ( system( 'curl -s --connect-timeout 30 --max-time 60  ' . $uudu . ' | perl' ) != 0 ) {
                 print "\nDownloading and running updateuserdomains-universal via wget...\n";
-                if ( system( 'wget -q -O - ' . $uudu . ' | perl' ) != 0 ) {
+                if ( system( 'wget --timeout=60 -q -O - ' . $uudu . ' | perl' ) != 0 ) {
                     print "\nFailed to download and run updateuserdomains-universal!\n";
                     sleep 2;
                 }
@@ -822,7 +822,23 @@ sub print_php_info {
     }
 
     if ( $php_major_version and $is_cpanel == 1 ) {
-        if ( open my $file_fh, '<', '/usr/local/apache/conf/php.conf.yaml' ) {
+        my $phpconf = `/usr/local/cpanel/bin/rebuild_phpconf --current 2> /dev/null`;
+        if ( $phpconf && -f '/etc/cpanel/ea4/is_ea4' ) {    # EA4
+            $php_version .= " [EA4]";
+            my $pkg;
+            foreach my $line ( split( /\n/, $phpconf ) ) {
+                if ( $line =~ /DEFAULT PHP: (ea-php\d{1,2})/ ) {
+                    $pkg = $1;
+                    next;
+                }
+                if ( $line =~ /${pkg} SAPI: (.+)$/ ) {
+                    $cpanel_php_handler = $1;
+                    last;
+                }
+            }
+        }
+        elsif ( open my $file_fh, '<', '/usr/local/apache/conf/php.conf.yaml' ) {    # EA3
+            $php_version .= " [EA3]";
             while (<$file_fh>) {
                 if (/^php${php_major_version}:\s(\S+)/) {
                     $cpanel_php_handler = $1;
@@ -1464,16 +1480,18 @@ sub print_prefixed_os_info {
 
 sub print_prefixed_php_info {
     my $php_version = `php -v 2>/dev/null`;
+    my $ea4 = ( $is_cpanel && -f '/etc/cpanel/ea4/is_ea4' ) ? '1' : '0';
 
     if ( $php_version =~ m{ (\d{1,2}\.\d{1,2})\. }xms ) {
         $php_version = $1;
-        $php_version = $prefix . 'PHP:' . $php_version;
     }
     else {
-        $php_version = $prefix . 'PHP:Unknown';
+        $php_version = 'Unknown';
     }
 
-    print "$php_version\n";
+    print $prefix . "PHP:" . $php_version . "\n";
+    print $prefix . "EA4:" . $ea4 . "\n" if $is_cpanel;
+
 }
 
 sub print_prefixed_mysql_info {
@@ -1618,41 +1636,59 @@ sub print_prefixed_user_config_problems {
 }
 
 sub print_prefixed_php_information {
-    my ( $phpini, $memory_limit, $post_max_size, $upload_max_filesize, $date_timezone, $output_buffering ) = (undef) x 6;
-
-    if ( $is_plesk == 1 or $is_plesk_smb10 == 1 or $is_ensim == 1 ) {
-        $phpini = '/etc/php.ini';
+    my $phpini;
+    my $php_out = `php -r '\$values=array("date.timezone","memory_limit","output_buffering","post_max_size","upload_max_filesize"); foreach (\$values as &\$value) {echo \$value . "=" . ini_get(\$value) . "\n";}' 2> /dev/null`;
+    my %ini = defined($php_out) ? map { ( split( /=/, $_, 2 ) )[ 0, 1 ] } split( /\n/, $php_out ) : ();
+    if ( keys(%ini) ) {
+        $ini{'parsed'} = 'php_output';
     }
-    elsif ( $is_da == 1 or $is_cpanel == 1 ) {
-        $phpini = '/usr/local/lib/php.ini';
+    else {
+        if ( $is_plesk == 1 or $is_plesk_smb10 == 1 or $is_ensim == 1 ) {
+            $phpini = '/etc/php.ini';
+        }
+        elsif ( $is_da == 1 or ( $is_cpanel == 1 and !-e '/etc/cpanel/ea4/is_ea4' ) ) {
+            $phpini = '/usr/local/lib/php.ini';
+        }
+        if ( defined($phpini) && open my $file_fh, '<', $phpini ) {
+            while ( my $line = <$file_fh> ) {
+                if ( $line =~ m{ \A (?:[\s\t]+)? memory_limit (?:[\s\t]+)? = (?:[\s\t]+)? ["']? (\d+)M ['"]? }xms ) {
+                    $ini{'memory_limit'} = $1;
+                }
+                if ( $line =~ m{ \A (?:[\s\t]+)? post_max_size (?:[\s\t]+)? = (?:[\s\t]+)? ["']? (\d+)M ['"]? }xms ) {
+                    $ini{'post_max_size'} = $1;
+                }
+                if ( $line =~ m{ \A (?:[\s\t]+)? upload_max_filesize (?:[\s\t]+)? = (?:[\s\t]+)? ["']? (\d+)M ['"]? }xms ) {
+                    $ini{'upload_max_filesize'} = $1;
+                }
+                if ( $line =~ m{ \A date\.timezone (?:\s+)? = (?:\s+)? (?:["'])? ([^"']+) (?:["'])? (?:\s+)? \z }xms ) {
+                    $ini{'date.timezone'} = $1;
+                }
+                if ( $line =~ m{ \A \s* output_buffering \s* = ["'\s]* ([^"'\s]+) ['"\s]* \z }xms ) {
+                    $ini{'output_buffering'} = $1;
+                }
+            }
+            close $file_fh;
+            $ini{'parsed'} = $phpini;
+        }
+        else {
+            $ini{'parsed'} = 'FAIL';
+        }
     }
-
-    return if !-e $phpini;
-
-    open my $file_fh, '<', $phpini;
-    while ( my $line = <$file_fh> ) {
-        if ( $line =~ m{ \A (?:[\s\t]+)? memory_limit (?:[\s\t]+)? = (?:[\s\t]+)? ["']? (\d+)M ['"]? }xms ) {
-            $memory_limit = $1;
-            print $prefix . 'PHPINI_MEMORY_LIMIT:' . $memory_limit . "\n";
-        }
-        if ( $line =~ m{ \A (?:[\s\t]+)? post_max_size (?:[\s\t]+)? = (?:[\s\t]+)? ["']? (\d+)M ['"]? }xms ) {
-            $post_max_size = $1;
-            print $prefix . 'PHPINI_POST_MAX_SIZE:' . $post_max_size . "\n";
-        }
-        if ( $line =~ m{ \A (?:[\s\t]+)? upload_max_filesize (?:[\s\t]+)? = (?:[\s\t]+)? ["']? (\d+)M ['"]? }xms ) {
-            $upload_max_filesize = $1;
-            print $prefix . 'PHPINI_UPLOAD_MAX_FILESIZE:' . $upload_max_filesize . "\n";
-        }
-        if ( $line =~ m{ \A date\.timezone (?:\s+)? = (?:\s+)? (?:["'])? ([^/"']+) / ([^/"']+) (?:["'])? (?:\s+)? \z }xms ) {
-            $date_timezone = $1 . '/' . $2;
-            print $prefix . 'PHPINI_DATE_TIMEZONE:' . $date_timezone . "\n";
-        }
-        if ( $line =~ m{ \A \s* output_buffering \s* = ["'\s]* ([^"'\s]+) ['"\s]* \z }xms ) {
-            $output_buffering = $1;
-            print $prefix . 'PHPINI_OUTPUT_BUFFERING:' . $output_buffering . "\n";
-        }
+    foreach my $bool (qw( output_buffering )) {    # These will return 0/1 from ini_get but are Off/On in php.ini
+        next unless defined $ini{$bool};
+        $ini{$bool} = ( $ini{$bool} eq "0" ) ? "Off" : $ini{$bool};
+        $ini{$bool} = ( $ini{$bool} eq "1" ) ? "On"  : $ini{$bool};
     }
-    close $file_fh;
+    foreach my $num (qw( memory_limit post_max_size upload_max_filesize )) {    # Strip the 'M' suffix from these
+        next unless defined $ini{$num};
+        $ini{$num} =~ tr/M//d;
+    }
+    foreach my $key ( sort( keys(%ini) ) ) {
+        next if !defined( $ini{$key} );
+        my $printkey = uc($key);
+        $printkey =~ tr/./_/;
+        print $prefix . "PHPINI_" . $printkey . ":" . $ini{$key} . "\n";
+    }
 
 }
 
@@ -1879,6 +1915,7 @@ sub parse_output_file {
     my ( $src_os_ver,  $dst_os_ver );
     my ( $src_php,     $dst_php );
     my ( $src_mysql,   $dst_mysql );
+    my $dst_ea4;
     my %badusers      = ();
     my %baduserconfig = ();
     my ( $src_dedicated_ipaddrs_used, $dst_ipaddrs_free );
@@ -1952,6 +1989,10 @@ sub parse_output_file {
         }
         elsif (m{ \A d:PHP:(.*) }xms) {
             $dst_php = $1;
+        }
+
+        if (m{ \A d:EA4:(.*) }xms) {
+            $dst_ea4 = $1;
         }
 
         ## MySQL checks
@@ -2105,7 +2146,7 @@ sub parse_output_file {
     print_parsed_panel_info();
     print_parsed_os_info($dst_os_ver);
     print_parsed_eula_info($eula_accepted);
-    print_parsed_php_info( $src_php, $dst_php );
+    print_parsed_php_info( $src_php, $dst_php, $dst_ea4 );
     print_parsed_mysql_info( $src_mysql, $dst_mysql );
     print_parsed_bad_username_info(%badusers);
     print_parsed_bad_user_config_info(%baduserconfig);
@@ -2175,29 +2216,56 @@ completen la configuración inicial que sigue.
 }
 
 sub print_parsed_php_info {
-    my ( $src_php, $dst_php ) = @_;
+    my ( $src_php, $dst_php, $dst_ea4 ) = @_;
+    my %phpver;
 
-    my $supported_php_versions = '5.3, 5.4, and 5.5';
-    my @php5_minor_available   = qw( 3 4 5 );
+    if ( $dst_ea4 eq '1' ) {
+        %phpver = (
+            major => {
+                5 => {
+                    minor => {
+                        4 => '5.4',
+                        5 => '5.5',
+                        6 => '5.6'
+                    },
+                },
+                7 => {
+                    minor => {
+                        0 => '7.0',
+                        1 => '7.1'
+                    },
+                }
+            },
+            supported    => '5.4, 5.5, 5.6, 7.0, and 7.1',
+            supported_es => '5.4, 5.5, 5.6, 7.0, y 7.1'
+        );
+    }
+    else {
+        %phpver = (
+            major => {
+                5 => {
+                    minor => {
+                        3 => '5.3',
+                        4 => '5.4',
+                        5 => '5.5',
+                        6 => '5.6'
+                    },
+                }
+            },
+            supported    => '5.3, 5.4, 5.5, and 5.6 (using EasyApache 3, PHP 7.0 and 7.1 are available in EasyApache 4)',
+            supported_es => '5.3, 5.4, 5.5, y 5.6 (utilizando EasyApache 3. PHP 7.0 and 7.1 son disponibles en EasyApache 4)'
+        );
+    }
 
-    my $min_php_minor_supported = shift @php5_minor_available;
-    my $max_php_minor_supported = pop @php5_minor_available;
-
-    my ( $src_php_major, $src_php_minor );
-    my ( $dst_php_major, $dst_php_minor );
+    my ( $src_php_major, $src_php_minor ) = ( '0', '0' );
+    my ( $dst_php_major, $dst_php_minor ) = ( '0', '0' );
 
     if ( $src_php =~ /^(\d+)\.(\d+)/ ) {
         ( $src_php_major, $src_php_minor ) = ( $1, $2 );
     }
-    else {
-        ( $src_php_major, $src_php_minor ) = ( '0', '0' );
-    }
 
     if ( $dst_php =~ /^(\d+)\.(\d+)/ ) {
         ( $dst_php_major, $dst_php_minor ) = ( $1, $2 );
-    }
-    else {
-        ( $dst_php_major, $dst_php_minor ) = ( '0', '0' );
     }
 
     my $print_message = 0;
@@ -2205,75 +2273,60 @@ sub print_parsed_php_info {
 
     return if ( $src_php eq $dst_php );
 
-    ## we only support PHP 5 at this time
-
-    ## if src php is higher than 5
-    if ( $src_php_major > 5 ) {
+    ## If source isn't using supported PHP
+    if ( !exists( $phpver{major}->{$src_php_major}->{minor}->{$src_php_minor} ) ) {
         $print_message = 1;
         if ( $opts->{'es'} == 0 ) {
-            $addendum = qq{
-cPanel only supports PHP 5 at this time. Since we cannot change the version of PHP to match that of the $src_panel_noversion server, this message is informational only. No action is required on your part.
+            $addendum .= qq{
+The $src_panel_noversion server appears to be running an unsupported version of PHP[1].  cPanel currently supports PHP $phpver{supported}.  Unfortunately, there may be issues with your sites displaying correctly on a supported PHP version.
+
+We can definitely move forward with the migration. However, we would be unable to determine if any of your PHP driven websites may be incompatible with the supported versions of PHP. We highly recommend that any PHP based websites are updated (if necessary) to be compatible with a supported version of PHP.
+
+Additionally, after the migration, we may not be able to provide assistance for issues related to websites which require an unsupported version of PHP.
+
+[1] http://php.net/eol.php
+
             };
         }
         else {    #ES
-            $addendum = q{
-En estos momentos cPanel sólo es compatible con PHP 5. Debido a esto no podremos cambiar la versión de PHP para que coincida con la del servidor $src_panel_noversion, este mensaje es para su información. No se requiere ninguna acción de usted.
-            };
-        }
-    }
-    ## if src php is lower than 5
-    elsif ( $src_php_major < 5 or ( $src_php_major == 5 and $src_php_minor < $min_php_minor_supported ) ) {
-        $print_message = 1;
-        if ( $opts->{'es'} == 0 ) {
-            $addendum = qq{
-The versions of PHP do not match. cPanel currently supports PHP 5.3, 5.4, and 5.5. Unfortunately, due to the end-of-life PHP version on the $src_panel_noversion server[1], there may be issues with your sites displaying correctly on the cPanel server. Many features available in PHP <= 5.2 were deprecated in PHP 5.3 and later removed in PHP 5.4 entirely[2].
+            $addendum .= qq{
+El servidor $src_panel_noversion parece estar corriendo una version de PHP[1] que no es soportado. cPanel actualmente soporta PHP $phpver{supported_es}. Desafortunadamente, pueden haber problemas con sus sitios siendo procesados correctamente al usar una version soportada de PHP.
 
+Definitivamente podemos proceder con esta migracion. Sin embargo, no podremos determinar si alguno de su sitios utilizando PHP son incompatibles con la version soportadas de PHP. Recomendamos que cualquier sitio que use PHP sea actualizado(si es necesario) a una version soportada de PHP.
 
-We can definitely move forward with the migration. However, we would be unable to determine if any of your PHP driven websites may be incompatible with 5.3 or higher. As such it’s highly recommended that any PHP based websites are updated (if necessary) to be compatible with versions of PHP beyond 5.2.
-
-
-Additionally, after the migration, we may not be able to provide assistance to issues related to websites which require PHP <= 5.2.
-
+Adicionalmente, no podremos proveer asistencia a problemas relacionados con sus sitios que requieran una version no soportada de PHP.
 
 [1] http://php.net/eol.php
-[2] http://www.php.net/manual/en/migration53.deprecated.php
-            };
-        }
-        else {    #ES
-            $addendum = qq{
-Las versiones de PHP no son la mismas. cPanel actualmente sólo es compatible con PHP 5.3, 5.4, y 5.5. Desafortunadamente, debido a la que la versiones de PHP requeridos han alcanzado el fin de vida. En el servidor $src_panel_noversion [1], puede haber problemas para que los sitios se muestren correctamente en el servidor de cPanel. Muchas de las funciones disponibles en PHP <= 5.2 fueron descontinuados en PHP 5.3 y removidos completamente en PHP 5.4[2].
 
-Podemos continuar con la migración. Sin embargo, no podremos determinar si alguno de sus sitios web PHP serán incompatibles con 5.3 o mayor. Debido a esto, recomendamos que actualicen sus sitios web para que sean compatibles con versiones de PHP mayores a 5.2.
-
-Además, después de la migración, no podemos proporcionar asistencia con problemas ocurridosn con sitios que requieran PHP <= 5.2.
-
-[1] http://php.net/eol.php
-[2] http://www.php.net/manual/en/migration53.deprecated.php
             };
         }
     }
 
-    ## if cPanel isn't using PHP 5 for some reason
-    if ( $dst_php_major != 5 ) {
+    ## if dest cPanel isn't using supported PHP for some reason
+    if ( !exists( $phpver{major}->{$dst_php_major}->{minor}->{$dst_php_minor} ) ) {
         $print_message = 1;
         if ( $opts->{'es'} == 0 ) {
-            $addendum = qq{
-cPanel only supports PHP 5 at this time. If you have elected to have us recompile PHP to add support for certain PHP modules, we will be unable to do so unless we can install PHP 5. We currently support PHP $supported_php_versions.
+            $addendum .= qq{
+The cPanel server appears to be running an unsupported version of PHP.  Only PHP $phpver{supported} are supported at this time. If you have elected to have us reconfigure PHP to add support for certain PHP modules, we will be unable to do so unless we can install a supported version of PHP.
 
+Would you like us to install one of the supported PHP versions on the cPanel server? If yes, which version? If no version is specified, we will use the latest available.
 
-Would you like us to install PHP 5 on the cPanel server? If yes, which version? If no version of specified, we will compile the latest available.
-
+Please note that this will most likely result in the unsupported version of PHP being removed and it may not be possible to reverse the change.
 
 [ ] YES   [ ] NO
+
             };
         }
         else {    #ES
-            $addendum = qq{
-En estos momentos cPanel sólo es compatible con PHP 5. Si usted ha optado que nosotros compilemos PHP para añadir soporte para determinados módulos de PHP, no podremos hacerlo a menos que podamos instalar PHP 5. Actualmente, soportamos PHP $supported_php_versions.\n\n";
+            $addendum .= qq{
+El servidor de cPanel parece estar usando una version no soportada de PHP. Solamente PHP $phpver{supported_es} es soportado en estos momentos. Si desean que nosotros reconfiguremos PHP para agregar soporte a ciertos módulos, no lo podremos hacer a menos que instalemos una version soportada de PHP.
 
-¿Quieres que instalemos PHP 5 en el servidor cPanel? Si es así, qué versión? Si no especifica una versión, vamos a compilar la última versión disponible.
+¿Desean que nosotros instalemos una version soportada de PHP en el servidor de cPanel? ¿Si la respuesta es si, que version? Si no nos proveen con una version especifica usaremos la ultima version disponible.
+
+Por favor tomen en cuenta que esto resultara en la version no soportada de PHP siendo removido del servidor y muy probablemente no podremos revertir este cambio.
 
 [ ] SI   [ ] NO
+
             };
         }
     }
@@ -2287,7 +2340,7 @@ En estos momentos cPanel sólo es compatible con PHP 5. Si usted ha optado que n
         }
         print "${src_panel_noversion}: $src_php\n";
         print "cPanel: $dst_php\n";
-        print "\n$addendum\n";
+        print "$addendum";
     }
 }
 
