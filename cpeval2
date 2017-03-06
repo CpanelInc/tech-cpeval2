@@ -127,65 +127,68 @@ use POSIX qw( strftime );
 use Term::ANSIColor qw(:constants);
 $Term::ANSIColor::AUTORESET = 1;
 
-my $version = '1.34';
+my $VERSION = '1.35';
 
-my $opts = opts_get();
+my $OPTS = opts_get();
 
-create_cpmig_user() if $opts->{'createuser'};
+create_cpmig_user() if $OPTS->{'createuser'};
 
 my $DEBUG = 0;
 
-my $panel_regex = 's:(?:Plesk(?:8|9|10|10SMB|11|12)|Ensim|DirectAdmin)';
+my $PANEL_REGEX = 's:(?:Plesk(?:8|9|10|10SMB|11|12)|Ensim|DirectAdmin)';
 
-my $prefix;    # d: or s:Plesk9 or s:DirectAdmin, etc.
-my $apache_bin;
-my $python_bin;
+my $PREFIX;    # d: or s:Plesk9 or s:DirectAdmin, etc.
+my $APACHE_BIN;
+my $PYTHON_BIN;
 
-my $is_cpanel      = 0;
-my $is_plesk       = 0;
-my $is_plesk_smb10 = 0;
-my $is_ensim       = 0;
-my $is_da          = 0;
+my $IS_CPANEL      = 0;
+my $IS_PLESK       = 0;
+my $IS_PLESK_SMB10 = 0;
+my $IS_ENSIM       = 0;
+my $IS_DA          = 0;
 
-my $src_panel;              # Ensim, DirectAdmin, Plesk8, Plesk9, Plesk10, Plesk10SMB, Plesk11, Plesk12
-my $src_panel_noversion;    # Ensim, DirectAdmin, Plesk
-my $src_panel_version;      # e.g. "Plesk 12.0.18"
+my $SRC_PANEL;              # Ensim, DirectAdmin, Plesk8, Plesk9, Plesk10, Plesk10SMB, Plesk11, Plesk12
+my $SRC_PANEL_NOVERSION;    # Ensim, DirectAdmin, Plesk
+my $SRC_PANEL_VERSION;      # e.g. "Plesk 12.0.18"
 
-my $dst_panel_version;      # e.g. "cPanel 11.44.0.18"
+my $DST_PANEL_VERSION;      # e.g. "cPanel 11.44.0.18"
 
-my $cpanel_version;         # e.g. "11.44.0.18"
-my $os_dist;                # e.g. "CentOS"
-my $os_version;             # e.g. "7.2"
+my $CPANEL_VERSION;         # e.g. "11.44.0.18"
+my $OS_DIST;                # e.g. "CentOS"
+my $OS_VERSION;             # e.g. "7.2"
 
-my ( @hosting_type_forward, @hosting_type_nohosting );
-my @plesk_reseller_username_conflicts;
+my ( @HOSTING_TYPE_FORWARD, @HOSTING_TYPE_NOHOSTING );
+my @PLESK_RESELLER_USERNAME_CONFLICTS;
 
-my $has_pgsql     = 0;
-my $eula_accepted = 0;
+my $HAS_PGSQL     = 0;
+my $EULA_ACCEPTED = 0;
 
-my ( $plesk_major_version, $plesk_minor_version );
+my ( $PLESK_MAJOR_VERSION, $PLESK_MINOR_VERSION );
 
-my @badusers;               # if mysql username conflicts are detected, skip any bad users since they need renaming anyway
+my @BADUSERS;               # if mysql username conflicts are detected, skip any bad users since they need renaming anyway
+
+my $TUD_BY_USER;
+my $TUD_BY_DOMAIN;
 
 get_control_panel_and_set_prefix();
 verify_mysql_connectivity();
 
-my $ticket    = get_ticket();
-my $cpmiguser = 'cpmig' . $ticket;
+my $TICKET    = get_ticket();
+my $CPMIGUSER = 'cpmig' . $TICKET;
 
-if ( $opts->{'createkeys'} ) {
-    die "create-keys should only be run on the cPanel destination host.\n" unless $is_cpanel;
-    create_cpmig_keypair( $cpmiguser, $ticket );
+if ( $OPTS->{'createkeys'} ) {
+    die "create-keys should only be run on the cPanel destination host.\n" unless $IS_CPANEL;
+    create_cpmig_keypair( $CPMIGUSER, $TICKET );
     exit;
 }
 
-if ( $opts->{'updateuserdomains'} ) {
-    die "cpeval2 --updateuserdomains is only for non-cPanel servers.\nUse /scripts/updateuserdomains instead.\n" if $is_cpanel;
+if ( $OPTS->{'updateuserdomains'} ) {
+    die "cpeval2 --updateuserdomains is only for non-cPanel servers.\nUse /scripts/updateuserdomains instead.\n" if $IS_CPANEL;
 }
 
 ## behave like the original cpeval
-if ( !$opts->{'inputfile'} ) {
-    check_trueuserdomains();
+if ( !$OPTS->{'inputfile'} ) {
+    ( $TUD_BY_USER, $TUD_BY_DOMAIN ) = _get_trueuserdomains_hashrefs();
     print_control_panel_info();
     print_os_info();
     print_perl_info();
@@ -199,7 +202,6 @@ if ( !$opts->{'inputfile'} ) {
     print_mysql_db_count();
     print_postgres_db_count();
     check_destination_var_usage();
-    print_duplicate_usernames();
     print_custom_apache_modules();
     print_custom_php_modules();
     print_htype_fwd();
@@ -214,6 +216,7 @@ if ( !$opts->{'inputfile'} ) {
     print_prefixed_php_info();
     print_prefixed_mysql_info();
     print_prefixed_bad_username_info();    # this sub MUST come before print_mysql_username_conflict_info();
+    print_prefixed_duplicate_users();
     print_prefixed_dedicated_ip_addr_info();
     print_prefixed_hosting_types();
     print_prefixed_tomcat_info();
@@ -230,10 +233,10 @@ if ( !$opts->{'inputfile'} ) {
 }
 ## parse output file; this prints info we can just copy/paste into the ticket
 else {
-    parse_output_file( $opts->{'inputfile'} );
+    parse_output_file( $OPTS->{'inputfile'} );
 }
 
-unless ( $opts->{'inputfile'} ) {
+unless ( $OPTS->{'inputfile'} ) {
     print_header('DISK SPACE');
     print "Please review this output now, compare with the output from the other server, and check for possible issues:\n\n";
     print `df -Ph | column -t | head -1 ; df -Ph | column -t | sort | uniq | egrep -v '^Filesystem|/var/named/run-root/var/run/dbus|/var/named/chroot|/usr/local/psa/handlers/|/virtfs/| /tmp\$'`;
@@ -243,7 +246,7 @@ unless ( $opts->{'inputfile'} ) {
     print "  * Is more space being used on the source than what is available on the destination?\n";
     print "  * If there's, say, 50GB free on the source, the largest account that can be copied is a little less than 25GB (half of 50)\n";
 
-    if ( $is_plesk == 1 ) {
+    if ( $IS_PLESK == 1 ) {
         print "  * Plesk stores users' data under /var [ /var/www/vhosts/\${DOMAIN}/ ] [ /var/qmail/mailnames/\${DOMAIN}/ ] [ /var/lib/mysql ]\n";
         if ( $^O =~ /freebsd/i ) {
             print "  * commonly, customers with FreeBSD will have different locations for their services\n"
@@ -253,18 +256,18 @@ unless ( $opts->{'inputfile'} ) {
     }
 }
 
-if ( $is_cpanel == 1 and -f '/var/cpanel/transfers_devel' ) {
+if ( $IS_CPANEL == 1 and -f '/var/cpanel/transfers_devel' ) {
     print "\n\n!! /var/cpanel/transfers_devel exists! Server may be using _DEVEL migrations scripts !!\n";
 }
 
 # for libkeyutils malware migrations
-if ( $is_cpanel == 1 ) {
+if ( $IS_CPANEL == 1 ) {
     check_for_ssl_certificates();
     check_for_dns_clustering();
 }
 
-unless ( $opts->{'inputfile'} ) {
-    if ( $is_cpanel == 1 ) {
+unless ( $OPTS->{'inputfile'} ) {
+    if ( $IS_CPANEL == 1 ) {
         my $mailutil_missing_libs = 0;
 
         if ( -e '/usr/bin/ldd' and -x '/usr/bin/ldd' ) {
@@ -290,7 +293,7 @@ submit_stats_info();
 
 check_for_missing_scp();
 
-auto_create_keypair( $cpmiguser, $ticket ) unless $opts->{'inputfile'};
+auto_create_keypair( $CPMIGUSER, $TICKET ) unless $OPTS->{'inputfile'};
 
 ##########
 
@@ -374,8 +377,8 @@ sub get_control_panel_and_set_prefix {
 
     # CPANEL
     if ( -f '/usr/local/cpanel/cpanel' ) {
-        $prefix    = 'd:';
-        $is_cpanel = 1;
+        $PREFIX    = 'd:';
+        $IS_CPANEL = 1;
     }
 
     # PLESK
@@ -393,8 +396,8 @@ sub get_control_panel_and_set_prefix {
                 open my $key_fh, '<', "/etc/sw/keys/keys/$plesk_key";
                 while (<$key_fh>) {
                     if (/Small Business Panel 10/) {
-                        $prefix         = 's:Plesk10SMB:';
-                        $is_plesk_smb10 = 1;
+                        $PREFIX         = 's:Plesk10SMB:';
+                        $IS_PLESK_SMB10 = 1;
                         last;
                     }
                 }
@@ -402,19 +405,19 @@ sub get_control_panel_and_set_prefix {
             }
         }
 
-        if ( !$prefix ) {
+        if ( !$PREFIX ) {
             open my $psa_fh, '<', '/usr/local/psa/version';
             while (<$psa_fh>) {
                 if (m{ \A (\d+)\.(\d+)? }xms) {
-                    $plesk_major_version = $1;
-                    $plesk_minor_version = $2 if $2;
-                    if ( $plesk_major_version == 11 and $plesk_minor_version and $plesk_minor_version >= 5 ) {
+                    $PLESK_MAJOR_VERSION = $1;
+                    $PLESK_MINOR_VERSION = defined $2 ? $2 : '0';
+                    if ( $PLESK_MAJOR_VERSION == 11 and $PLESK_MINOR_VERSION and $PLESK_MINOR_VERSION >= 5 ) {
 
                         #                        print_plesk_version_unsupported( "${plesk_major_version}.${plesk_minor_version}" );
                     }
 
-                    $prefix   = 's:Plesk' . $plesk_major_version . ':';
-                    $is_plesk = 1;
+                    $PREFIX   = 's:Plesk' . $PLESK_MAJOR_VERSION . ':';
+                    $IS_PLESK = 1;
                 }
             }
             close $psa_fh;
@@ -423,23 +426,23 @@ sub get_control_panel_and_set_prefix {
 
     # ENSIM
     elsif ( -f '/usr/bin/getapplversion' ) {
-        $prefix   = 's:Ensim:';
-        $is_ensim = 1;
+        $PREFIX   = 's:Ensim:';
+        $IS_ENSIM = 1;
     }
 
     # DA
     elsif ( -f '/usr/local/directadmin/directadmin' ) {
-        $prefix = 's:DirectAdmin:';
-        $is_da  = 1;
+        $PREFIX = 's:DirectAdmin:';
+        $IS_DA  = 1;
     }
     else {
         die "[!] Unknown control panel\n";
     }
 
-    print_news_cpanel() if ( $is_cpanel == 1 );
-    print_news_plesk()  if ( $is_plesk == 1 or $is_plesk_smb10 == 1 );
-    print_news_ensim()  if ( $is_ensim == 1 );
-    print_news_da()     if ( $is_da == 1 );
+    print_news_cpanel() if ( $IS_CPANEL == 1 );
+    print_news_plesk()  if ( $IS_PLESK == 1 or $IS_PLESK_SMB10 == 1 );
+    print_news_ensim()  if ( $IS_ENSIM == 1 );
+    print_news_da()     if ( $IS_DA == 1 );
 }
 
 sub check_trueuserdomains {
@@ -449,17 +452,17 @@ sub check_trueuserdomains {
     my $max_age     = 30;                                                                                               #minutes
     my $skip_update = 0;
 
-    if ( $is_cpanel == 0 ) {
+    if ( $IS_CPANEL == 0 ) {
         if ( -f $tud ) {
             my $age = int( ( time() - ( stat(_) )[9] ) / 60 );
             die("${tud} exists, but unable to determine modification time!\n\n") unless defined($age);
-            if ( !$opts->{'updateuserdomains'} and $age <= $max_age ) {
+            if ( !$OPTS->{'updateuserdomains'} and $age <= $max_age ) {
                 print "\n${tud} is less than ${max_age} minutes old, not auto-updating.\n";
                 print "Use cpeval2 --updateuserdomains to force an update.\n";
                 $skip_update = 1;
             }
         }
-        if ( $opts->{'updateuserdomains'} or !$skip_update ) {
+        if ( $OPTS->{'updateuserdomains'} or !$skip_update ) {
             print "${tud} doesn't exist, is more than ${max_age} minutes old, or you forced an update.\n";
             print "\nDownloading and running updateuserdomains-universal via curl...\n";
             if ( system( 'curl -s --connect-timeout 30 --max-time 60  ' . $uudu . ' | perl' ) != 0 ) {
@@ -483,7 +486,7 @@ sub check_trueuserdomains {
 }
 
 sub check_destination_var_usage {
-    return if $is_cpanel == 0;
+    return if $IS_CPANEL == 0;
 
     my $var_usage;
     open my $df_fh, '-|', '/bin/df', '-hP', '/var';
@@ -519,20 +522,20 @@ sub verify_mysql_connectivity {
             print "Could not connect to MySQL (query failed: mysql -e 'select 1').\n";
             print "/root/.my.cnf already exists. Inspect it manually.\n";
 
-            if ( $is_plesk == 1 && version_compare( $plesk_major_version . "." . $plesk_minor_version, '>=', '10.2' ) ) {
+            if ( $IS_PLESK == 1 && version_compare( $PLESK_MAJOR_VERSION . "." . $PLESK_MINOR_VERSION, '>=', '10.2' ) ) {
                 print "Hint: try user 'admin' and the password from /usr/local/psa/bin/admin --show-password OR the contents of /etc/psa/.psa.shadow.\n";
             }
-            elsif ( $is_plesk == 1 or $is_plesk_smb10 == 1 ) {
+            elsif ( $IS_PLESK == 1 or $IS_PLESK_SMB10 == 1 ) {
                 print "Hint: try user 'admin' and the contents of /etc/psa/.psa.shadow.\n";
             }
-            elsif ( $is_da == 1 ) {
+            elsif ( $IS_DA == 1 ) {
                 print "Hint: try the credentials from /usr/local/directadmin/conf/mysql.conf .\n";
             }
-            elsif ( $is_ensim == 1 ) {
+            elsif ( $IS_ENSIM == 1 ) {
                 print "Hint: try with the user 'root' and the password from this command:\n";
                 print 'ensim-python -c "import sys ; sys.path.append(\'/usr/lib/opcenter/mysql\') ; import mysqlbe ; print mysqlbe.read_mysqlpass()"' . "\n";
             }
-            elsif ( $is_cpanel == 1 ) {
+            elsif ( $IS_CPANEL == 1 ) {
                 print "Hint: try with mysql user 'root' and the server's root password.\n";
             }
             else {
@@ -544,14 +547,14 @@ sub verify_mysql_connectivity {
         # If /root/.my.cnf does not exist, attempt to create it unless the server uses cPanel
         else {
             print "Could not connect to MySQL (/root/.my.cnf does not exist).";
-            if ( $is_cpanel == 1 ) {
+            if ( $IS_CPANEL == 1 ) {
                 print "\n";
             }
             else {
                 print "Trying to create /root/.my.cnf now.\n";
             }
             umask 0077;    # so /root/.my.cnf is 0600
-            if ( $is_plesk == 1 or $is_plesk_smb10 == 1 ) {
+            if ( $IS_PLESK == 1 or $IS_PLESK_SMB10 == 1 ) {
                 if ( -e '/etc/psa/.psa.shadow' ) {
                     open my $psa_fh, '<', '/etc/psa/.psa.shadow' or die "$!\n";
                     chomp( my $mysql_password = readline($psa_fh) );
@@ -570,7 +573,7 @@ sub verify_mysql_connectivity {
                     die "Attempted to obtain mysql password from /etc/psa/.psa.shadow, but it does not appear to exist\n";
                 }
             }
-            elsif ( $is_da == 1 ) {
+            elsif ( $IS_DA == 1 ) {
                 if ( -e '/usr/local/directadmin/conf/mysql.conf' ) {
                     open my $mysqlconf_fh, '<', '/usr/local/directadmin/conf/mysql.conf' or die "$!\n";
 
@@ -595,7 +598,7 @@ sub verify_mysql_connectivity {
                     die "Attempted to obtain mysql password from /usr/local/directadmin/conf/mysql.conf, but it does not appear to exist\n";
                 }
             }
-            elsif ( $is_ensim == 1 ) {
+            elsif ( $IS_ENSIM == 1 ) {
                 chomp( my $mysql_password = `ensim-python -c "import sys ; sys.path.append('/usr/lib/opcenter/mysql') ; import mysqlbe ; print mysqlbe.read_mysqlpass()"` );
                 if ( !$mysql_password ) {
                     die 'Unable to determine mysql pass via this command: ' . "ensim-python -c \"import sys ; sys.path.append('/usr/lib/opcenter/mysql') ; import mysqlbe ; print mysqlbe.read_mysqlpass()\"\n";
@@ -606,7 +609,7 @@ sub verify_mysql_connectivity {
                     close $mycnf_fh;
                 }
             }
-            elsif ( $is_cpanel == 1 ) {
+            elsif ( $IS_CPANEL == 1 ) {
                 die "You will need to manually create /root/.my.cnf\n";
             }
             else {
@@ -631,21 +634,21 @@ sub verify_mysql_connectivity {
 sub print_control_panel_info {
     my $panel_version;
 
-    if ($is_cpanel) {
+    if ($IS_CPANEL) {
         if ( open my $file_fh, '<', '/usr/local/cpanel/version' ) {
             chomp( $panel_version = readline $file_fh );
             close $file_fh;
         }
 
         if ($panel_version) {
-            $src_panel_version = "cPanel " . $panel_version;
-            $cpanel_version    = $panel_version;
+            $DST_PANEL_VERSION = "cPanel " . $panel_version;
+            $CPANEL_VERSION    = $panel_version;
         }
         else {
-            $src_panel_version = "cPanel (version unknown)";
+            $DST_PANEL_VERSION = "cPanel (version unknown)";
         }
     }
-    elsif ( $is_plesk or $is_plesk_smb10 ) {
+    elsif ( $IS_PLESK or $IS_PLESK_SMB10 ) {
         if ( open my $file_fh, '<', '/usr/local/psa/version' ) {
             while (<$file_fh>) {
                 if (m{ \A ([0-9]{1,2}\.[0-9]{1,2}\.[0-9]{1,2}) }xms) {
@@ -656,39 +659,39 @@ sub print_control_panel_info {
         }
 
         if ($panel_version) {
-            $dst_panel_version = "Plesk " . $panel_version;
+            $SRC_PANEL_VERSION = "Plesk " . $panel_version;
         }
         else {
-            $dst_panel_version = "Plesk (version unknown)";
+            $SRC_PANEL_VERSION = "Plesk (version unknown)";
         }
     }
-    elsif ($is_ensim) {
+    elsif ($IS_ENSIM) {
         my $panel_version = `/usr/bin/getapplversion` or die("Unable to discern Ensim version");
         $panel_version =~ /^([0-9]{1,2}\.[0-9]{1,2}\.[0-9]{1,2})-.*$/;
         $panel_version = $1;
 
         if ($panel_version) {
-            $dst_panel_version = "Ensim " . $panel_version;
+            $SRC_PANEL_VERSION = "Ensim " . $panel_version;
         }
         else {
-            $dst_panel_version = "Ensim (version unknown)";
+            $SRC_PANEL_VERSION = "Ensim (version unknown)";
         }
     }
-    elsif ($is_da) {
+    elsif ($IS_DA) {
         $panel_version = `/usr/local/directadmin/directadmin v` or die("Unable to discern DirectAdmin version");
         $panel_version =~ /^Version: DirectAdmin v.([0-9]{1,2}\.[0-9]{1,2}\.[0-9]{1,2})$/;
         $panel_version = $1;
 
         if ($panel_version) {
-            $dst_panel_version = "DirectAdmin " . $panel_version;
+            $SRC_PANEL_VERSION = "DirectAdmin " . $panel_version;
         }
         else {
-            $dst_panel_version = "DirectAdmin (version unknown)";
+            $SRC_PANEL_VERSION = "DirectAdmin (version unknown)";
         }
     }
 
-    print "[ " . $dst_panel_version . " ]\n" if $dst_panel_version;
-    print "[ " . $src_panel_version . " ]\n" if $src_panel_version;
+    print "[ " . $DST_PANEL_VERSION . " ]\n" if $DST_PANEL_VERSION;
+    print "[ " . $SRC_PANEL_VERSION . " ]\n" if $SRC_PANEL_VERSION;
 
 }
 
@@ -738,8 +741,8 @@ sub print_os_info {
             if ( -e '/etc/' . $release_file ) {
                 if ( open my $rel_fh, '<', '/etc/' . $release_file ) {
                     while (<$rel_fh>) {
-                        if    (/(\d+\.\d+)/) { $os_version = $1; last; }
-                        elsif (/(\d+)/)      { $os_version = $1; last; }
+                        if    (/(\d+\.\d+)/) { $OS_VERSION = $1; last; }
+                        elsif (/(\d+)/)      { $OS_VERSION = $1; last; }
                     }
                 }
                 $release_file =~ s/release//g;
@@ -749,9 +752,9 @@ sub print_os_info {
                 if ( $release_file eq 'redhat' ) {
                     $release_file = 'Redhat/CentOS';
                 }
-                $os_dist = $release_file;    # global
+                $OS_DIST = $release_file;    # global
                 $os .= " (" . $release_file;
-                $os .= defined($os_version) ? " ${os_version})" : ")";
+                $os .= defined($OS_VERSION) ? " " . $OS_VERSION . ")" : ")";
                 last;
             }
         }
@@ -821,7 +824,7 @@ sub print_php_info {
         $php_major_version = $1;
     }
 
-    if ( $php_major_version and $is_cpanel == 1 ) {
+    if ( $php_major_version and $IS_CPANEL == 1 ) {
         my $phpconf = `/usr/local/cpanel/bin/rebuild_phpconf --current 2> /dev/null`;
         if ( $phpconf && -f '/etc/cpanel/ea4/is_ea4' ) {    # EA4
             $php_version .= " [EA4]";
@@ -861,14 +864,14 @@ sub print_apache_info {
     my @apache_binaries = qw( httpd apache2 http2 httpd2 apache );
 
     for my $apache_binary (@apache_binaries) {
-        $apache_bin = _find_bin($apache_binary);
-        if ($apache_bin) {
+        $APACHE_BIN = _find_bin($apache_binary);
+        if ($APACHE_BIN) {
             last;
         }
     }
 
-    if ($apache_bin) {
-        $apache_version = `$apache_bin -v`;
+    if ($APACHE_BIN) {
+        $apache_version = `$APACHE_BIN -v`;
         if ( $apache_version =~ m{ \A Server \s version: \s Apache/(\S+) \s }xms ) {
             $apache_version = $1;
         }
@@ -980,7 +983,7 @@ sub print_dedicated_ipaddrs {
     $result = scalar(@usedips) . " Used";
 
     # Get Free Count if cPanel
-    if ( $is_cpanel == 1 ) {
+    if ( $IS_CPANEL == 1 ) {
         my $cmd = `/scripts/ipusage`;
         my @ipusage = split( "\n", $cmd );
         foreach (@ipusage) {
@@ -1045,7 +1048,7 @@ sub sqlcmd {
 
 sub get_mysql_auth {
     my $data = {};
-    if ( $is_cpanel == 1 ) {
+    if ( $IS_CPANEL == 1 ) {
         if ( -f "/root/.my.cnf" ) {
             my $mycnf;
             open( FILE, "/root/.my.cnf" );
@@ -1073,7 +1076,7 @@ sub get_mysql_auth {
             die('/root/.my.cnf missing');
         }
     }
-    elsif ( $is_plesk == 1 or $is_plesk_smb10 == 1 ) {
+    elsif ( $IS_PLESK == 1 or $IS_PLESK_SMB10 == 1 ) {
         if ( -f "/etc/psa/.psa.shadow" ) {
             my $psa;
             open( FILE, "/etc/psa/.psa.shadow" );
@@ -1089,22 +1092,22 @@ sub get_mysql_auth {
             die('/etc/psa/.psa.shadow missing');
         }
     }
-    elsif ( $is_ensim == 1 ) {
+    elsif ( $IS_ENSIM == 1 ) {
         my @python_binaries = qw( ensim-python python python2 python2.1 python2.4 );
 
         for my $python_binary (@python_binaries) {
-            $python_bin = _find_bin($python_binary);
-            if ($python_bin) {
+            $PYTHON_BIN = _find_bin($python_binary);
+            if ($PYTHON_BIN) {
                 last;
             }
         }
 
         local $ENV{'PYTHONPATH'} = '/usr/lib/opcenter/mysql/';
-        $data->{'pass'} = `$python_bin -c 'from mysqlbe import *; print read_mysqlpass();'`;
+        $data->{'pass'} = `$PYTHON_BIN -c 'from mysqlbe import *; print read_mysqlpass();'`;
         chomp( $data->{'pass'} );
         $data->{'user'} = 'root';
     }
-    elsif ( $is_da == 1 ) {
+    elsif ( $IS_DA == 1 ) {
         if ( -f "/usr/local/directadmin/conf/mysql.conf" ) {
             if ( open( my $fh, '<', "/usr/local/directadmin/conf/mysql.conf" ) ) {
                 while ( my $line = <$fh> ) {
@@ -1202,7 +1205,7 @@ sub psqlcmd {
 
 sub get_psql_auth {
     my $data = {};
-    if ( $is_cpanel == 1 ) {
+    if ( $IS_CPANEL == 1 ) {
         if ( -f "/root/.pgpass" ) {
             my $mycnf;
             open( FILE, "/root/.pgpass" );
@@ -1224,7 +1227,7 @@ sub get_psql_auth {
             $data->{'pass'} = "";
         }
     }
-    if ( $is_plesk == 1 or $is_plesk_smb10 == 1 ) {
+    if ( $IS_PLESK == 1 or $IS_PLESK_SMB10 == 1 ) {
         my $line = sqlcmd("use psa; SELECT admin_login, admin_password FROM DatabaseServers WHERE type='postgresql'");
         my ( $user, $pass ) = split /\s+/, $line;
         $data->{'user'} = $user;
@@ -1296,7 +1299,7 @@ sub print_custom_apache_modules {
       prefork.c
     );
 
-    my $apachem = `$apache_bin -l 2> /dev/null`;
+    my $apachem = `$APACHE_BIN -l 2> /dev/null`;
     $apachem =~ /in modules:\s([^\[]+)[\s]?$/m;
 
     my @mods = split( "\n", $1 );
@@ -1404,38 +1407,6 @@ sub print_custom_php_modules {
     }
 }
 
-sub print_duplicate_usernames {    # And non-unique first 8 characters as required by WHM 11.44+
-    if ( -f "/etc/trueuserdomains" ) {
-        my %user  = ();
-        my @dupes = ();
-        open( FILE, "/etc/trueuserdomains" );
-        while (<FILE>) {
-            chomp;
-            if (m/[^:]+: ([^^\s]+)(?:\^|\s*|$)/) {
-                $user{$1}{$_} = 1;
-                my $first8 = substr( $1, 0, 8 );
-                next if length($1) < 8;
-                $user{ $first8 . " (first 8)" }{$_} = 1;
-            }
-        }
-        close(FILE);
-
-        for ( sort( keys %user ) ) {
-            next if scalar( keys( %{ $user{$_} } ) ) <= 1;
-            push @dupes, " " x 4 . $_ . ":\n" . " " x 8 . join( "\n" . " " x 8, sort( keys( %{ $user{$_} } ) ) );
-        }
-
-        return if scalar @dupes < 1;
-
-        print "\nDuplicate usernames, or whose first 8 characters are not unique:\n";
-        print join( "\n", @dupes );
-        print "\n";
-    }
-    else {
-        die("/etc/trueuserdomains missing!");
-    }
-}
-
 sub _find_bin {
     my $bin = shift;
 
@@ -1464,23 +1435,46 @@ sub _find_bin {
     }
 }
 
-sub print_prefixed_panel_info {
-    if ($src_panel_version) {
-        print $prefix . 'VERSION:' . $src_panel_version . "\n";
+sub _get_trueuserdomains_hashrefs {
+    check_trueuserdomains();
+    my $tud = '/etc/trueuserdomains';
+    my $tud_by_user_ref;
+    my $tud_by_domain_ref;
+    die "${tud} does not exist!\n" unless -f $tud;
+    if ( open my $tud_fh, '<', $tud ) {
+        while (<$tud_fh>) {
+            chomp;
+            my ( $domain, $user ) = ( split( /\s*:\s*/, $_, 3 ) )[ 0, 1 ];
+
+            # strip site number from Ensim usernames
+            $user =~ s/\^site(\d+)//g;
+            push @{ $tud_by_user_ref->{$user} },     $domain;
+            push @{ $tud_by_domain_ref->{$domain} }, $user;
+        }
     }
-    elsif ($dst_panel_version) {
-        print $prefix . 'VERSION:' . $dst_panel_version . "\n";
+    else {
+        die "Could not open ${tud}: $!\n";
+    }
+    return $tud_by_user_ref, $tud_by_domain_ref;
+}
+
+sub print_prefixed_panel_info {
+    if ($SRC_PANEL_VERSION) {
+        print $PREFIX . 'VERSION:' . $SRC_PANEL_VERSION . "\n";
+    }
+    elsif ($DST_PANEL_VERSION) {
+        print $PREFIX . 'VERSION:' . $DST_PANEL_VERSION . "\n";
     }
 }
 
 sub print_prefixed_os_info {
-    print $prefix . 'OS_DIST:' . $os_dist . "\n"       if defined($os_dist);
-    print $prefix . 'OS_VERSION:' . $os_version . "\n" if defined($os_version);
+    print $PREFIX . 'OS_DIST:' . $OS_DIST . "\n"       if defined($OS_DIST);
+    print $PREFIX . 'OS_VERSION:' . $OS_VERSION . "\n" if defined($OS_VERSION);
 }
 
 sub print_prefixed_php_info {
     my $php_version = `php -v 2>/dev/null`;
-    my $ea4 = ( $is_cpanel && -f '/etc/cpanel/ea4/is_ea4' ) ? '1' : '0';
+    my $ea4 = ( $IS_CPANEL && -f '/etc/cpanel/ea4/is_ea4' ) ? '1' : '0';
 
     if ( $php_version =~ m{ (\d{1,2}\.\d{1,2})\. }xms ) {
         $php_version = $1;
@@ -1489,8 +1483,8 @@ sub print_prefixed_php_info {
         $php_version = 'Unknown';
     }
 
-    print $prefix . "PHP:" . $php_version . "\n";
-    print $prefix . "EA4:" . $ea4 . "\n" if $is_cpanel;
+    print $PREFIX . "PHP:" . $php_version . "\n";
+    print $PREFIX . "EA4:" . $ea4 . "\n" if $IS_CPANEL;
 
 }
 
@@ -1501,28 +1495,46 @@ sub print_prefixed_mysql_info {
 
     if ( $mysql_version ne 'Unknown' ) {
         if ( version_compare( $mysql_version, qw( < 4.1 ) ) ) {
-            print $prefix . 'MYSQL:' . $mysql_version . ":UNSUPPORTED\n";
+            print $PREFIX . 'MYSQL:' . $mysql_version . ":UNSUPPORTED\n";
         }
         else {
-            print $prefix . 'MYSQL:' . "$mysql_version\n";
+            print $PREFIX . 'MYSQL:' . "$mysql_version\n";
         }
     }
 }
 
 sub print_prefixed_bad_username_info {
-    if ( $prefix =~ /^s/ ) {
-        if ( -f '/etc/trueuserdomains' ) {
-            open my $userdomains_fh, '<', '/etc/trueuserdomains' or die "Could not open /etc/trueuserdomains: $!\n";
-            while (<$userdomains_fh>) {
-                chomp;
-                if (m{ [^:]: \s (.*[\-\._]|test|[0-9]|[A-Z]) }xms) {
-                    print $prefix . 'BADUSER:' . "$_\n";
-                    push @badusers, $_;
-                }
+    if ( $PREFIX =~ /^s/ ) {
+        for my $user ( sort keys %{$TUD_BY_USER} ) {
+            if ( $user =~ m{ \A (.*[\-\._]|test|[0-9]|[A-Z]) }xms ) {
+                print $PREFIX . 'BADUSER:' . $user . "\n";
+                push @BADUSERS, $user;
             }
-            close $userdomains_fh;
         }
     }
+}
+
+sub print_prefixed_duplicate_users {    # WHM 11.44+ requires first 8 characters of username to be unique for database prefixing
+    my %first8;
+    my $print_dupes = sub {
+        my ( $href, $printkey ) = @_;
+        for my $key ( sort keys %{$href} ) {
+            if ( scalar( my @dupes = @{ $href->{$key} } ) > 1 ) {
+                for my $dupe ( sort @dupes ) {
+                    print $PREFIX . $printkey . ':' . $key . ':' . $dupe . "\n";
+                }
+            }
+        }
+    };
+    for my $user ( sort keys %{$TUD_BY_USER} ) {
+        if ( length($user) >= 8 ) {
+            my $user8 = substr( $user, 0, 8 );
+            push @{ $first8{$user8} }, $user . ' (' . $TUD_BY_USER->{$user}->[0] . ')';
+        }
+    }
+    &$print_dupes( $TUD_BY_USER,   'DUPLICATE_USER' );
+    &$print_dupes( \%first8,       'DUPLICATE_FIRST8' );
+    &$print_dupes( $TUD_BY_DOMAIN, 'DUPLICATE_DOMAIN' );
 }
 
 sub print_prefixed_dedicated_ip_addr_info {
@@ -1530,7 +1542,7 @@ sub print_prefixed_dedicated_ip_addr_info {
     my @cpanel_free_ipaddrs;
     my $cpanel_free_ipaddrs;
 
-    if ( $prefix =~ /^s/ ) {
+    if ( $PREFIX =~ /^s/ ) {
         if ( open my $domainips_fh, '<', '/etc/domainips' ) {
             while (<$domainips_fh>) {
                 if (/^(?:\d+\.\d+\.\d+\.\d+):\s(.*)/) {
@@ -1540,14 +1552,14 @@ sub print_prefixed_dedicated_ip_addr_info {
             close $domainips_fh;
         }
 
-        print $prefix . 'IPADDRS_USED:' . scalar @source_used_ipaddrs . "\n";
+        print $PREFIX . 'IPADDRS_USED:' . scalar @source_used_ipaddrs . "\n";
 
         for my $site (@source_used_ipaddrs) {
             chomp $site;
-            print $prefix . 'DEDICATED_SITE:' . $site . "\n";
+            print $PREFIX . 'DEDICATED_SITE:' . $site . "\n";
         }
     }
-    elsif ( $prefix =~ /^d/ ) {
+    elsif ( $PREFIX =~ /^d/ ) {
         if ( open my $command_fh, '-|', '/scripts/ipusage' ) {
             while (<$command_fh>) {
                 if (m{ \A (\d+)\.(\d+)\.(\d+)\.(\d+) \s+ \z }xms) {
@@ -1559,22 +1571,22 @@ sub print_prefixed_dedicated_ip_addr_info {
 
         $cpanel_free_ipaddrs = scalar @cpanel_free_ipaddrs;
 
-        print $prefix . 'IPADDRS_FREE:' . $cpanel_free_ipaddrs . "\n";
+        print $PREFIX . 'IPADDRS_FREE:' . $cpanel_free_ipaddrs . "\n";
     }
 }
 
 sub print_prefixed_hosting_types {
-    if (@hosting_type_forward) {
-        for my $line (@hosting_type_forward) {
+    if (@HOSTING_TYPE_FORWARD) {
+        for my $line (@HOSTING_TYPE_FORWARD) {
             if ( $line =~ m{ \A (\S+) \s forwarded \s to \s -> \s (\S+) }xms ) {
-                print $prefix . 'FORWARDING_DOMAIN:' . $1 . $2 . "\n";
+                print $PREFIX . 'FORWARDING_DOMAIN:' . $1 . $2 . "\n";
             }
         }
     }
 
-    if (@hosting_type_nohosting) {
-        for my $domain (@hosting_type_nohosting) {
-            print $prefix . 'NOHOSTING_DOMAIN:' . $domain . "\n";
+    if (@HOSTING_TYPE_NOHOSTING) {
+        for my $domain (@HOSTING_TYPE_NOHOSTING) {
+            print $PREFIX . 'NOHOSTING_DOMAIN:' . $domain . "\n";
         }
     }
 }
@@ -1584,10 +1596,10 @@ sub print_prefixed_tomcat_info {
     $has_tomcat = `ps aux | grep tomca[t]`;
 
     if ($has_tomcat) {
-        print $prefix . 'TOMCAT:' . '1' . "\n";
+        print $PREFIX . 'TOMCAT:' . '1' . "\n";
     }
     else {
-        print $prefix . 'TOMCAT:' . '0' . "\n";
+        print $PREFIX . 'TOMCAT:' . '0' . "\n";
     }
 }
 
@@ -1596,23 +1608,23 @@ sub print_prefixed_coldfusion_info {
     $has_coldfusion = `ps aux | grep coldfusio[n]`;
 
     if ($has_coldfusion) {
-        print $prefix . 'COLDFUSION:' . '1' . "\n";
+        print $PREFIX . 'COLDFUSION:' . '1' . "\n";
     }
     else {
-        print $prefix . 'COLDFUSION:' . '0' . "\n";
+        print $PREFIX . 'COLDFUSION:' . '0' . "\n";
     }
 }
 
 sub print_prefixed_reseller_username_conflicts {
-    return if !@plesk_reseller_username_conflicts;
+    return if !@PLESK_RESELLER_USERNAME_CONFLICTS;
 
-    for my $reseller (@plesk_reseller_username_conflicts) {
-        print $prefix . 'RESELLER_CONFLICT:' . $reseller . "\n";
+    for my $reseller (@PLESK_RESELLER_USERNAME_CONFLICTS) {
+        print $PREFIX . 'RESELLER_CONFLICT:' . $reseller . "\n";
     }
 }
 
 sub print_prefixed_user_config_problems {
-    if ( $is_da == 1 ) {
+    if ( $IS_DA == 1 ) {
         my $configdir = '/usr/local/directadmin/data/users';
         if ( opendir my $dh, $configdir ) {
             for ( readdir $dh ) {
@@ -1624,7 +1636,7 @@ sub print_prefixed_user_config_problems {
                             my $type  = uc($1);
                             my $value = $2;
                             next if $value =~ m{ ^ (\d+|unlimited) $ }x;
-                            print $prefix . 'BAD_USER_CONFIG:' . $user . ':' . $type . ":\"" . $value . "\"\n";
+                            print $PREFIX . 'BAD_USER_CONFIG:' . $user . ':' . $type . ":\"" . $value . "\"\n";
                         }
                     }
                     close $fh;
@@ -1643,10 +1655,10 @@ sub print_prefixed_php_information {
         $ini{'parsed'} = 'php_output';
     }
     else {
-        if ( $is_plesk == 1 or $is_plesk_smb10 == 1 or $is_ensim == 1 ) {
+        if ( $IS_PLESK == 1 or $IS_PLESK_SMB10 == 1 or $IS_ENSIM == 1 ) {
             $phpini = '/etc/php.ini';
         }
-        elsif ( $is_da == 1 or ( $is_cpanel == 1 and !-e '/etc/cpanel/ea4/is_ea4' ) ) {
+        elsif ( $IS_DA == 1 or ( $IS_CPANEL == 1 and !-e '/etc/cpanel/ea4/is_ea4' ) ) {
             $phpini = '/usr/local/lib/php.ini';
         }
         if ( defined($phpini) && open my $file_fh, '<', $phpini ) {
@@ -1687,15 +1699,14 @@ sub print_prefixed_php_information {
         next if !defined( $ini{$key} );
         my $printkey = uc($key);
         $printkey =~ tr/./_/;
-        print $prefix . "PHPINI_" . $printkey . ":" . $ini{$key} . "\n";
+        print $PREFIX . "PHPINI_" . $printkey . ":" . $ini{$key} . "\n";
     }
 
 }
 
 sub print_prefixed_cpanel_eula_accepted_check {
-    return if ( $is_cpanel != 1 );
+    return if ( $IS_CPANEL != 1 );
 
-    my $eula_accepted = 0;
     my @dir_contents;
 
     if ( -d '/var/cpanel/activate' ) {
@@ -1705,35 +1716,26 @@ sub print_prefixed_cpanel_eula_accepted_check {
     }
 
     if ( !@dir_contents ) {
-        print $prefix . 'EULA:' . '0' . "\n";
+        print $PREFIX . 'EULA:' . '0' . "\n";
     }
     else {
-        print $prefix . 'EULA:' . '1' . "\n";
+        print $PREFIX . 'EULA:' . '1' . "\n";
+        $EULA_ACCEPTED = 1;
     }
 }
 
 sub print_prefixed_mysql_username_conflict_info {
-    return if ( $is_plesk == 0 and $is_plesk_smb10 == 0 );
+    return if ( $IS_PLESK == 0 and $IS_PLESK_SMB10 == 0 );
 
     my ( $user, $domain );
-    my %trueuserdomains;
     my %mysql_layout;
     my @seen;
-
-    open my $fh, '<', '/etc/trueuserdomains' or die $!;
-    while (<$fh>) {
-        chomp;
-        ( $domain, $user ) = split /:/, $_;
-        $user =~ s/\s+//g;
-        $trueuserdomains{$domain} = $user;
-    }
-    close $fh;
 
     my $domain_ids_and_names = `mysql -BN psa -e 'select id,name from domains order by id'`;
     my %domain_ids_and_names = split /\s/, $domain_ids_and_names;
 
     while ( my ( $domain_id, $trueuserdomain ) = each(%domain_ids_and_names) ) {
-        next if not exists $trueuserdomains{$trueuserdomain};
+        next if not exists $TUD_BY_DOMAIN->{$trueuserdomain}->[0];
         my @dbusers = `mysql -BN psa -e '
                    select
                         db_users.login
@@ -1745,18 +1747,18 @@ sub print_prefixed_mysql_username_conflict_info {
                        data_bases.type = "mysql"
                        and domains.id = $domain_id'`;
         next if !@dbusers;
-        $mysql_layout{$trueuserdomain}{ $trueuserdomains{$trueuserdomain} } = [@dbusers];
+        $mysql_layout{$trueuserdomain}{ $TUD_BY_DOMAIN->{$trueuserdomain}->[0] } = [@dbusers];
     }
 
-    for my $sysuser ( values %trueuserdomains ) {
+    for my $sysuser ( keys %{$TUD_BY_USER} ) {
         next if grep { /^$sysuser$/ } @seen;
-        next if grep { /^$sysuser$/ } @badusers;    # bad usernames must be renamed anyway
+        next if grep { /^$sysuser$/ } @BADUSERS;    # bad usernames must be renamed anyway
         for my $domain ( keys %mysql_layout ) {
             next if ( exists $mysql_layout{$domain}{$sysuser} );    # Plesk user alice can have a mysql user of the same name
-            if ( grep { /^$sysuser$/ } @{ $mysql_layout{$domain}{ $trueuserdomains{$domain} } } ) {
-                for my $d ( keys %trueuserdomains ) {
-                    if ( $trueuserdomains{$d} eq $sysuser ) {
-                        print $prefix . 'MYSQL_CONFLICT:' . "${domain}:${sysuser}:${d}\n";
+            if ( grep { /^$sysuser$/ } @{ $mysql_layout{$domain}{ $TUD_BY_DOMAIN->{$domain}->[0] } } ) {
+                for my $d ( keys %{$TUD_BY_DOMAIN} ) {
+                    if ( exists $TUD_BY_DOMAIN->{$d}->[0] && $TUD_BY_DOMAIN->{$d}->[0] eq $sysuser ) {
+                        print $PREFIX . 'MYSQL_CONFLICT:' . "${domain}:${sysuser}:${d}\n";
                         push @seen, $sysuser;                       # avoid checking the same user twice
                         last;
                     }
@@ -1767,20 +1769,20 @@ sub print_prefixed_mysql_username_conflict_info {
 }
 
 sub print_prefixed_mysql_openfileslimit {
-    return if ( $is_cpanel == 0 );
+    return if ( $IS_CPANEL == 0 );
 
     # open_files_limit is auto-scaled with the Transfer Tool in 11.44+, but not when using /scripts/restorepkg
     # I want to re-enable this in the future if restorepkg is fixed to do this, but for now we need to keep checking.
-    #    return if ( version_compare( $cpanel_version, qw( >= 11.44.0.0 ) ) );
+    #    return if ( version_compare( $CPANEL_VERSION, qw( >= 11.44.0.0 ) ) );
 
     my $open_files_limit = `mysqladmin var | grep open_files_limit | awk '{print \$4}'`;
     chomp $open_files_limit;
 
-    print $prefix . 'MYSQL_OPEN_FILES_LIMIT:' . $open_files_limit . "\n";
+    print $PREFIX . 'MYSQL_OPEN_FILES_LIMIT:' . $open_files_limit . "\n";
 }
 
 sub print_prefixed_mysql_skip_networking {
-    return if ( $is_cpanel == 0 );
+    return if ( $IS_CPANEL == 0 );
 
     my $my_cnf = '/etc/my.cnf';
 
@@ -1788,7 +1790,7 @@ sub print_prefixed_mysql_skip_networking {
         while (<$my_cnf_fh>) {
             chomp( my $line = $_ );
             if ( $line =~ m{ \A (?:[ \t]+)? (skip[_-]net.*) }xms ) {
-                print $prefix . 'MYSQL_SKIP_NETWORKING:1' . "\n";
+                print $PREFIX . 'MYSQL_SKIP_NETWORKING:1' . "\n";
                 last;
             }
         }
@@ -1800,7 +1802,7 @@ sub print_prefixed_mysql_old_style_passwords_info {
     ## if the source is using old_passwords=1 and the cPanel server is using MySQL >= 5.6,
     ## MySQL data may not restore properly
 
-    return if ( $is_cpanel == 1 );
+    return if ( $IS_CPANEL == 1 );
 
     my $my_cnf = '/etc/my.cnf';
 
@@ -1808,7 +1810,7 @@ sub print_prefixed_mysql_old_style_passwords_info {
         while (<$my_cnf_fh>) {
             chomp( my $line = $_ );
             if ( $line =~ m{ \A (?:[ \t]+)? (old[_-]p.*=(?:[ \t]?)1) }xms ) {
-                print $prefix . 'MYSQL_OLD_STYLE_PASSWORDS:1' . "\n";
+                print $PREFIX . 'MYSQL_OLD_STYLE_PASSWORDS:1' . "\n";
                 last;
             }
         }
@@ -1820,7 +1822,7 @@ sub print_plesk_duplicate_email_users {
 
     # Plesk allowed creation of duplicate mixed-case email addresses, this reports those.
     # Prior to case FB-75913 mixed-case addresses were skipped entirely, but now we will copy a mixed-case address as all-lowercase if one doesn't already exist
-    return if ( $is_plesk == 0 and $is_plesk_smb10 == 0 );
+    return if ( $IS_PLESK == 0 and $IS_PLESK_SMB10 == 0 );
 
     my $maildir = '/var/qmail/mailnames';
     return if !-d $maildir;
@@ -1882,7 +1884,7 @@ sub print_reseller_username_conflicts {
 
     # Case FB-76677 - [Plesk] If a reseller has a domain, copy it instead of making a "psa-reseller-$cpuser.invalid" domain
     # This was addressed by adding --reseller and --no-reseller options to pkgacct-pXa, so we still need to know which reseller usernames conflict with system usernames so they can be handled appropriately.
-    return unless ( $is_plesk == 1 or $is_plesk_smb10 == 1 );
+    return unless ( $IS_PLESK == 1 or $IS_PLESK_SMB10 == 1 );
     my @plesk_resellers;
 
     my @reseller_query = `mysql -BN psa -e 'select login, type from clients'`;
@@ -1897,7 +1899,7 @@ sub print_reseller_username_conflicts {
         for my $reseller (@plesk_resellers) {
             my $test = getpwnam $reseller;
             if ($test) {
-                push @plesk_reseller_username_conflicts, $reseller;
+                push @PLESK_RESELLER_USERNAME_CONFLICTS, $reseller;
             }
         }
     }
@@ -1915,16 +1917,19 @@ sub parse_output_file {
     my ( $src_os_ver,  $dst_os_ver );
     my ( $src_php,     $dst_php );
     my ( $src_mysql,   $dst_mysql );
-    my $dst_ea4;
+    my $dst_ea4       = 0;
     my %badusers      = ();
     my %baduserconfig = ();
+    my %dupe_users    = ();
+    my %dupe_first8   = ();
+    my %dupe_domains  = ();
     my ( $src_dedicated_ipaddrs_used, $dst_ipaddrs_free );
     my @sites_on_dedicated_ipaddrs;
     my ( @src_disk_usage, @dst_disk_usage );
     my %forwarding_domains = ();
     my @nohosting_domains;
-    my ( $src_tomcat,     $dst_tomcat );
-    my ( $src_coldfusion, $dst_coldfusion );
+    my ( $src_tomcat,     $dst_tomcat )     = ( 0, 0 );
+    my ( $src_coldfusion, $dst_coldfusion ) = ( 0, 0 );
     my @reseller_username_conflicts;
     my ( $src_phpini_memory_limit,        $dst_phpini_memory_limit );
     my ( $src_phpini_post_max_size,       $dst_phpini_post_max_size );
@@ -1950,33 +1955,33 @@ sub parse_output_file {
 
         ## get source panel type
         if (m{ \A s:([^:]+): }xms) {
-            $src_panel = $1;
+            $SRC_PANEL = $1;
         }
 
         ## so we can print just 'Plesk' to the customer, and not, say, 'Plesk10SMB'
-        if ( $src_panel and $src_panel =~ /^Plesk/ ) {
-            $src_panel_noversion = 'Plesk';
+        if ( $SRC_PANEL and $SRC_PANEL =~ /^Plesk/ ) {
+            $SRC_PANEL_NOVERSION = 'Plesk';
         }
         else {
-            $src_panel_noversion = $src_panel;
+            $SRC_PANEL_NOVERSION = $SRC_PANEL;
         }
 
         ## Panel version info
-        if (m{ \A $panel_regex:VERSION:(.*) }xms) {
-            $src_panel_version = $1;
+        if (m{ \A $PANEL_REGEX:VERSION:(.*) }xms) {
+            $SRC_PANEL_VERSION = $1;
         }
         elsif (m{ \A d:VERSION:(.*) }xms) {
-            $dst_panel_version = $1;
+            $DST_PANEL_VERSION = $1;
         }
 
         ## OS checks
-        if (m{ \A $panel_regex:OS_DIST:(.*) }xms) {
+        if (m{ \A $PANEL_REGEX:OS_DIST:(.*) }xms) {
             $src_os_dist = $1;
         }
         elsif (m{ \A d:OS_DIST:(.*) }xms) {
             $dst_os_dist = $1;
         }
-        if (m{ \A $panel_regex:OS_VERSION:(.*) }xms) {
+        if (m{ \A $PANEL_REGEX:OS_VERSION:(.*) }xms) {
             $src_os_ver = $1;
         }
         elsif (m{ \A d:OS_VERSION:(.*) }xms) {
@@ -1984,7 +1989,7 @@ sub parse_output_file {
         }
 
         ## PHP checks
-        if (m{ \A $panel_regex:PHP:(.*) }xms) {
+        if (m{ \A $PANEL_REGEX:PHP:(.*) }xms) {
             $src_php = $1;
         }
         elsif (m{ \A d:PHP:(.*) }xms) {
@@ -1996,7 +2001,7 @@ sub parse_output_file {
         }
 
         ## MySQL checks
-        if (m{ \A $panel_regex:MYSQL:(.*) }xms) {
+        if (m{ \A $PANEL_REGEX:MYSQL:(.*) }xms) {
             $src_mysql = $1;
         }
         elsif (m{ \A d:MYSQL:(.*) }xms) {
@@ -2004,7 +2009,7 @@ sub parse_output_file {
         }
 
         ## Bad username checks
-        if (m{ \A $panel_regex:BADUSER:(.*):\s(.*) \z }xms) {
+        if (m{ \A $PANEL_REGEX:BADUSER:(.*):\s(.*) \z }xms) {
             my ( $domain, $user ) = ( $1, $2 );
 
             ## For Ensim
@@ -2015,13 +2020,27 @@ sub parse_output_file {
         }
 
         ## Bad user config checks
-        if (m{ \A $panel_regex:BAD_USER_CONFIG:(.+):(.+):(.+) \z }xms) {
+        if (m{ \A $PANEL_REGEX:BAD_USER_CONFIG:(.+):(.+):(.+) \z }xms) {
             my ( $user, $type, $value ) = ( $1, $2, $3 );
             $baduserconfig{$user}{$type} = $value;
         }
 
+        ## Duplicate user/domain checks
+        if (m{ \A $PANEL_REGEX:DUPLICATE_USER:(.*):(.*) \z }xms) {
+            my ( $user, $domain ) = ( $1, $2 );
+            push @{ $dupe_users{$user} }, $domain;
+        }
+        if (m{ \A $PANEL_REGEX:DUPLICATE_FIRST8:(.*):(.*) \z }xms) {
+            my ( $first8, $user ) = ( $1, $2 );
+            push @{ $dupe_first8{$first8} }, $user;
+        }
+        if (m{ \A $PANEL_REGEX:DUPLICATE_DOMAIN:(.*):(.*) \z }xms) {
+            my ( $domain, $user ) = ( $1, $2 );
+            push @{ $dupe_domains{$domain} }, $user;
+        }
+
         ## IP addr checks
-        if (m{ \A $panel_regex:IPADDRS_USED:(.*) \z }xms) {
+        if (m{ \A $PANEL_REGEX:IPADDRS_USED:(.*) \z }xms) {
             $src_dedicated_ipaddrs_used = $1;
         }
         elsif (m{ \A d:IPADDRS_FREE:(.*) }xms) {
@@ -2029,7 +2048,7 @@ sub parse_output_file {
         }
 
         ## Sites on dedicated IP addrs
-        if (m{ \A $panel_regex:DEDICATED_SITE:(.*) \z }xms) {
+        if (m{ \A $PANEL_REGEX:DEDICATED_SITE:(.*) \z }xms) {
             push @sites_on_dedicated_ipaddrs, $1;
         }
 
@@ -2046,7 +2065,7 @@ sub parse_output_file {
         }
 
         ## Tomcat check
-        if (m{ \A $panel_regex:TOMCAT:1 }xms) {
+        if (m{ \A $PANEL_REGEX:TOMCAT:1 }xms) {
             $src_tomcat = 1;
         }
         if (m{ \A d:TOMCAT:1 }xms) {
@@ -2054,7 +2073,7 @@ sub parse_output_file {
         }
 
         ## ColdFusion check
-        if (m{ \A $panel_regex:COLDFUSION:1 }xms) {
+        if (m{ \A $PANEL_REGEX:COLDFUSION:1 }xms) {
             $src_coldfusion = 1;
         }
         if (m{ \A d:COLDFUSION:1 }xms) {
@@ -2063,52 +2082,52 @@ sub parse_output_file {
 
         ## Reseller duplicate username conflict
         # s:Plesk11::RESELLER_CONFLICT:summit
-        if (m{ \A $panel_regex:RESELLER_CONFLICT:(.*) }xms) {
+        if (m{ \A $PANEL_REGEX:RESELLER_CONFLICT:(.*) }xms) {
             push @reseller_username_conflicts, $1;
         }
 
-        if (m{ \A $panel_regex:PHPINI_MEMORY_LIMIT:(\d+) }xms) {
-            $src_phpini_memory_limit = $1;
+        if (m{ \A $PANEL_REGEX:PHPINI_MEMORY_LIMIT:(\d+) }xms) {
+            $src_phpini_memory_limit = length $1 ? $1 : 'NOT SET';
         }
         elsif (m{ \A d:PHPINI_MEMORY_LIMIT:(\d+) }xms) {
-            $dst_phpini_memory_limit = $1;
+            $dst_phpini_memory_limit = length $1 ? $1 : 'NOT SET';
         }
 
-        if (m{ \A $panel_regex:PHPINI_POST_MAX_SIZE:(\d+) }xms) {
-            $src_phpini_post_max_size = $1;
+        if (m{ \A $PANEL_REGEX:PHPINI_POST_MAX_SIZE:(\d+) }xms) {
+            $src_phpini_post_max_size = length $1 ? $1 : 'NOT SET';
         }
         elsif (m{ \A d:PHPINI_POST_MAX_SIZE:(\d+) }xms) {
-            $dst_phpini_post_max_size = $1;
+            $dst_phpini_post_max_size = length $1 ? $1 : 'NOT SET';
         }
 
-        if (m{ \A $panel_regex:PHPINI_UPLOAD_MAX_FILESIZE:(\d+) }xms) {
-            $src_phpini_upload_max_filesize = $1;
+        if (m{ \A $PANEL_REGEX:PHPINI_UPLOAD_MAX_FILESIZE:(\d+) }xms) {
+            $src_phpini_upload_max_filesize = length $1 ? $1 : 'NOT SET';
         }
         elsif (m{ \A d:PHPINI_UPLOAD_MAX_FILESIZE:(\d+) }xms) {
-            $dst_phpini_upload_max_filesize = $1;
+            $dst_phpini_upload_max_filesize = length $1 ? $1 : 'NOT SET';
         }
 
-        if (m{ \A $panel_regex:PHPINI_DATE_TIMEZONE:(.*) }xms) {
-            $src_phpini_date_timezone = $1;
+        if (m{ \A $PANEL_REGEX:PHPINI_DATE_TIMEZONE:(.*) }xms) {
+            $src_phpini_date_timezone = length $1 ? $1 : 'NOT SET';
         }
         elsif (m{ \A d:PHPINI_DATE_TIMEZONE:(.*) }xms) {
-            $dst_phpini_date_timezone = $1;
+            $dst_phpini_date_timezone = length $1 ? $1 : 'NOT SET';
         }
 
-        if (m{ \A $panel_regex:PHPINI_OUTPUT_BUFFERING:(.*) }xms) {
-            $src_phpini_output_buffering = $1;
+        if (m{ \A $PANEL_REGEX:PHPINI_OUTPUT_BUFFERING:(.*) }xms) {
+            $src_phpini_output_buffering = length $1 ? $1 : 'NOT SET';
         }
         elsif (m{ \A d:PHPINI_OUTPUT_BUFFERING:(.*) }xms) {
-            $dst_phpini_output_buffering = $1;
+            $dst_phpini_output_buffering = length $1 ? $1 : 'NOT SET';
         }
 
         ## EULA check
         if (m{ \A d:EULA:(\d) }xms) {
-            $eula_accepted = $1;
+            $EULA_ACCEPTED = $1;
         }
 
         ## mysql username conflict check
-        if (m{ \A $panel_regex:MYSQL_CONFLICT:(.*)\z }xms) {
+        if (m{ \A $PANEL_REGEX:MYSQL_CONFLICT:(.*)\z }xms) {
             push @mysql_username_conflicts, $1;
         }
 
@@ -2122,7 +2141,7 @@ sub parse_output_file {
             $skip_networking = 1;
         }
 
-        if (m{ \A $panel_regex:MYSQL_OLD_STYLE_PASSWORDS:1 \z }xms) {
+        if (m{ \A $PANEL_REGEX:MYSQL_OLD_STYLE_PASSWORDS:1 \z }xms) {
             $mysql_old_style_passwords = 1;
         }
     }
@@ -2136,7 +2155,7 @@ sub parse_output_file {
     my $src_disk_usage_ref = \@src_disk_usage;
     my $dst_disk_usage_ref = \@dst_disk_usage;
 
-    if ( $opts->{'es'} == 1 ) {
+    if ( $OPTS->{'es'} == 1 ) {
         print "Hola,\n\nLa evaluación inicial ha completado. Nuestros resultados son los siguientes:\n\n";
     }
     else {
@@ -2145,15 +2164,16 @@ sub parse_output_file {
 
     print_parsed_panel_info();
     print_parsed_os_info($dst_os_ver);
-    print_parsed_eula_info($eula_accepted);
+    print_parsed_eula_info($EULA_ACCEPTED);
     print_parsed_php_info( $src_php, $dst_php, $dst_ea4 );
     print_parsed_mysql_info( $src_mysql, $dst_mysql );
     print_parsed_bad_username_info(%badusers);
     print_parsed_bad_user_config_info(%baduserconfig);
+    print_parsed_duplicate_users( \%dupe_users, \%dupe_first8, \%dupe_domains );
     print_parsed_ipaddr_info( $src_dedicated_ipaddrs_used, $dst_ipaddrs_free, @sites_on_dedicated_ipaddrs );
     print_parsed_forwarding_domain_info(%forwarding_domains);
     print_parsed_nohosting_domain_info(@nohosting_domains);
-    print_parsed_tomcat_info( $src_tomcat, $dst_tomcat );
+    print_parsed_tomcat_info( $src_tomcat, $dst_tomcat, $dst_ea4, $dst_os_ver );
     print_parsed_coldfusion_info( $src_coldfusion, $dst_coldfusion );
     print_parsed_reseller_username_conflicts(@reseller_username_conflicts);
     print_parsed_phpini_items(
@@ -2171,20 +2191,20 @@ sub parse_output_file {
 }
 
 sub print_parsed_panel_info {
-    if ( $opts->{'es'} == 0 ) {
-        print "Source: " . $src_panel_version . "\n";
-        print "Destination: " . $dst_panel_version . "\n";
+    if ( $OPTS->{'es'} == 0 ) {
+        print "Source: " . $SRC_PANEL_VERSION . "\n";
+        print "Destination: " . $DST_PANEL_VERSION . "\n";
     }
     else {    #ES
-        print "Origen: " . $src_panel_version . "\n";
-        print "Destino: " . $dst_panel_version . "\n";
+        print "Origen: " . $SRC_PANEL_VERSION . "\n";
+        print "Destino: " . $DST_PANEL_VERSION . "\n";
     }
 }
 
 sub print_parsed_os_info {
     my ($dst_os_ver) = @_;
     if ( defined($dst_os_ver) && version_compare( $dst_os_ver, qw( < 6 ) ) ) {
-        if ( $opts->{'es'} == 0 ) {
+        if ( $OPTS->{'es'} == 0 ) {
             print_header('Operating System Version');
             print q{The operating system version on the destination server is not at least major version 6.  Due to various limitations in older operating systems such as the lack of SNI and TLS 1.1/1.2 support we highly recommend that CentOS/RedHat/CloudLinux 6 or 7 is used.
 };
@@ -2198,8 +2218,8 @@ sub print_parsed_os_info {
 }
 
 sub print_parsed_eula_info {
-    if ( $eula_accepted == 0 ) {
-        if ( $opts->{'es'} == 0 ) {
+    if ( $EULA_ACCEPTED == 0 ) {
+        if ( $OPTS->{'es'} == 0 ) {
             print_header('cPanel End User License Agreement');
             print q{The license agreement has not yet been accepted. Before we can proceed, you must log into WHM as root and accept the license agreement, then complete the initial setup that follows.
 };
@@ -2276,9 +2296,9 @@ sub print_parsed_php_info {
     ## If source isn't using supported PHP
     if ( !exists( $phpver{major}->{$src_php_major}->{minor}->{$src_php_minor} ) ) {
         $print_message = 1;
-        if ( $opts->{'es'} == 0 ) {
+        if ( $OPTS->{'es'} == 0 ) {
             $addendum .= qq{
-The $src_panel_noversion server appears to be running an unsupported version of PHP[1].  cPanel currently supports PHP $phpver{supported}.  Unfortunately, there may be issues with your sites displaying correctly on a supported PHP version.
+The ${SRC_PANEL_NOVERSION} server appears to be running an unsupported version of PHP[1].  cPanel currently supports PHP $phpver{supported}.  Unfortunately, there may be issues with your sites displaying correctly on a supported PHP version.
 
 We can definitely move forward with the migration. However, we would be unable to determine if any of your PHP driven websites may be incompatible with the supported versions of PHP. We highly recommend that any PHP based websites are updated (if necessary) to be compatible with a supported version of PHP.
 
@@ -2290,7 +2310,7 @@ Additionally, after the migration, we may not be able to provide assistance for 
         }
         else {    #ES
             $addendum .= qq{
-El servidor $src_panel_noversion parece estar corriendo una version de PHP[1] que no es soportado. cPanel actualmente soporta PHP $phpver{supported_es}. Desafortunadamente, pueden haber problemas con sus sitios siendo procesados correctamente al usar una version soportada de PHP.
+El servidor ${SRC_PANEL_NOVERSION} parece estar corriendo una version de PHP[1] que no es soportado. cPanel actualmente soporta PHP $phpver{supported_es}. Desafortunadamente, pueden haber problemas con sus sitios siendo procesados correctamente al usar una version soportada de PHP.
 
 Definitivamente podemos proceder con esta migracion. Sin embargo, no podremos determinar si alguno de su sitios utilizando PHP son incompatibles con la version soportadas de PHP. Recomendamos que cualquier sitio que use PHP sea actualizado(si es necesario) a una version soportada de PHP.
 
@@ -2305,7 +2325,7 @@ Adicionalmente, no podremos proveer asistencia a problemas relacionados con sus 
     ## if dest cPanel isn't using supported PHP for some reason
     if ( !exists( $phpver{major}->{$dst_php_major}->{minor}->{$dst_php_minor} ) ) {
         $print_message = 1;
-        if ( $opts->{'es'} == 0 ) {
+        if ( $OPTS->{'es'} == 0 ) {
             $addendum .= qq{
 The cPanel server appears to be running an unsupported version of PHP.  Only PHP $phpver{supported} are supported at this time. If you have elected to have us reconfigure PHP to add support for certain PHP modules, we will be unable to do so unless we can install a supported version of PHP.
 
@@ -2332,15 +2352,15 @@ Por favor tomen en cuenta que esto resultara en la version no soportada de PHP s
     }
 
     if ( $print_message == 1 ) {
-        if ( $opts->{'es'} == 0 ) {
+        if ( $OPTS->{'es'} == 0 ) {
             print_header('PHP Versions');
         }
         else {    #ES
             print_header('Versiones de PHP');
         }
-        print "${src_panel_noversion}: $src_php\n";
-        print "cPanel: $dst_php\n";
-        print "$addendum";
+        print $SRC_PANEL_NOVERSION . ': ' . $src_php . "\n";
+        print 'cPanel: ' . $dst_php . "\n";
+        print $addendum;
     }
 }
 
@@ -2354,9 +2374,9 @@ sub print_parsed_mysql_info {
         $src_mysql =~ s/:UNSUPPORTED//g;
 
         $print_message = 1;
-        if ( $opts->{'es'} == 0 ) {
+        if ( $OPTS->{'es'} == 0 ) {
             $addendum = qq{
-The $src_panel_noversion server is running MySQL ${src_mysql}. This version is not supported at this time. We can attempt the migration anyway, but you may need to create the databases on the cPanel server, then manually export and import your databases.
+The ${SRC_PANEL_NOVERSION} server is running MySQL ${src_mysql}. This version is not supported at this time. We can attempt the migration anyway, but you may need to create the databases on the cPanel server, then manually export and import your databases.
 
 
 Would you like us to proceed with the migration anyway?
@@ -2375,20 +2395,20 @@ The cPanel server is running MySQL 4, which is not supported at this time. Our r
     }
 
     if ( $print_message == 1 ) {
-        if ( $opts->{'es'} == 0 ) {
+        if ( $OPTS->{'es'} == 0 ) {
             print_header('MySQL Versions');
         }
         else {    #ES
             print_header('Versiones MySQL');
             $addendum = qq{
-El servidor $src_panel_noversion está utiliza MySQL ${src_mysql}. Esta versión no es soportado en estos momentos. Podemos intentar continuar con la migración, pero usted tendra que crear las bases de datos en el servidor de cPanel, despues manualmente exportar e importar sus bases de datos.
+El servidor ${SRC_PANEL_NOVERSION} está utiliza MySQL ${src_mysql}. Esta versión no es soportado en estos momentos. Podemos intentar continuar con la migración, pero usted tendra que crear las bases de datos en el servidor de cPanel, despues manualmente exportar e importar sus bases de datos.
 
 Quieres que procedamos con la migración?
 
 [ ] SI   [ ] NO
             };
         }
-        print "${src_panel_noversion}: $src_mysql\n";
+        print $SRC_PANEL_NOVERSION . ': ' . $src_mysql . "\n";
         print "cPanel: $dst_mysql\n";
         print "\n$addendum\n";
     }
@@ -2401,10 +2421,10 @@ sub print_parsed_bad_username_info {
 
     # get panel version. print how to change username based on panel version
 
-    if ( $opts->{'es'} == 0 ) {
+    if ( $OPTS->{'es'} == 0 ) {
         print_header('Incompatible Usernames');
         print qq{
-Usernames were found on the $src_panel_noversion server that are not compatible with cPanel servers. You will need to rename those users before we can copy them. A list of these users is as follows:
+Usernames were found on the ${SRC_PANEL_NOVERSION} server that are not compatible with cPanel servers. You will need to rename those users before we can copy them. A list of these users is as follows:
 
 
 USERNAME: DOMAIN
@@ -2412,15 +2432,15 @@ USERNAME: DOMAIN
     }
     else {    #ES
         print_header('Malos nombres de usuario');
-        print "Los nombres de usuario que se encuentran en el servidor de $src_panel_noversion no son compatibles con los servidores de cPanel. Usted tendrá que cambiar el nombre de los usuarios antes de poder copiarlos. La lista de estos usuarios son:\n\n";
+        print "Los nombres de usuario que se encuentran en el servidor de ${SRC_PANEL_NOVERSION} no son compatibles con los servidores de cPanel. Usted tendrá que cambiar el nombre de los usuarios antes de poder copiarlos. La lista de estos usuarios son:\n\n";
         print "NOMBRE DE USUARIO: DOMINIO\n";
     }
 
-    for my $domain ( sort keys %badusers ) {
-        print "${domain}: $badusers{$domain}\n";
+    for my $user ( sort keys %badusers ) {
+        print "${user}: $badusers{$user}\n";
     }
 
-    if ( $opts->{'es'} == 0 ) {
+    if ( $OPTS->{'es'} == 0 ) {
         print_username_change_info();
     }
     else {
@@ -2431,10 +2451,10 @@ USERNAME: DOMAIN
 sub print_parsed_bad_user_config_info {
     my %baduserconfig = @_;
     return if !%baduserconfig;
-    if ( $opts->{'es'} == 0 ) {
+    if ( $OPTS->{'es'} == 0 ) {
         print_header('User configuration issues');
         print qq{
-Some user configuration problems were found on the $src_panel_noversion server that may cause failues during the transfer process.  You will need to correct these configuration issues before we can copy these users.  A list of these users and configuration problems is as follows:
+Some user configuration problems were found on the ${SRC_PANEL_NOVERSION} server that may cause failues during the transfer process.  You will need to correct these configuration issues before we can copy these users.  A list of these users and configuration problems is as follows:
 
 USERNAME: PROBLEM DESCRIPTION
 
@@ -2443,7 +2463,7 @@ USERNAME: PROBLEM DESCRIPTION
     else {    #ES
         print_header('Problemas de configuracion de usuarios');
         print qq{
-Hemos encontrado algunos problemas de configuración en el servidor de $src_panel_noversion que pueden causar problemas durante el proceso de transferencia. Ustedes necesitaran corregir estos problemas de configuración antes de que podamos copiar estos usuarios. La lista de usuarios y los problemas de configuración son los siguientes:
+Hemos encontrado algunos problemas de configuración en el servidor de ${SRC_PANEL_NOVERSION} que pueden causar problemas durante el proceso de transferencia. Ustedes necesitaran corregir estos problemas de configuración antes de que podamos copiar estos usuarios. La lista de usuarios y los problemas de configuración son los siguientes:
 
 USUARIO: DESCRIPCION
 
@@ -2457,16 +2477,91 @@ USUARIO: DESCRIPCION
     );
     for my $user ( sort keys %baduserconfig ) {
         for my $type ( sort keys %{ $baduserconfig{$user} } ) {
-            my $type_lang = $type . ( $opts->{'es'} ? "_ES" : "_EN" );
+            my $type_lang = $type . ( $OPTS->{'es'} ? "_ES" : "_EN" );
             print $user . ": " . $problem{$type_lang} . $baduserconfig{$user}{$type} . "\n\n";
         }
     }
 }
 
+sub print_parsed_duplicate_users {
+    my ( $dupe_users, $dupe_first8, $dupe_domains ) = @_;
+    my $print_dupes = sub {
+        my ( $href, $pp ) = @_;
+        $pp = defined($pp) ? $pp : '';
+        for my $key ( sort keys %{$href} ) {
+            print "\n";
+            for my $dupe ( sort @{ $href->{$key} } ) {
+                print $pp . $key . ': ' . $dupe . "\n";
+            }
+        }
+    };
+
+    if ( scalar keys %{$dupe_users} ) {
+        if ( $OPTS->{'es'} == 0 ) {
+            print_header('Duplicate usernames');
+            print qq{
+Some duplicated user names were found on the ${SRC_PANEL_NOVERSION} server.  Please rename these users so that they will not cause a conflict during transfer:
+
+USERNAME: DOMAIN
+};
+        }
+        else {    #ES
+            print_header('Nombres de usuarios duplicados');
+            print qq{
+Se han encontrado nombres de usuarios duplicados en el servidor ${SRC_PANEL_NOVERSION}. Por favor cambie el nombre de estos usuarios para que no haya un conflicto durante la transferencia:
+
+USUARIO: DOMINIO
+};
+        }
+        &$print_dupes($dupe_users);
+    }
+
+    if ( scalar keys %{$dupe_first8} ) {
+        if ( $OPTS->{'es'} == 0 ) {
+            print_header('First 8 characters of username are not unique');
+            print qq{
+Database prefixing in WHM/cPanel requires the first 8 characters of each username to be unique, please rename the following users on the ${SRC_PANEL_NOVERSION} server to prevent a conflict during transfer:
+
+FIRST_8: FULL_USERNAME (DOMAIN)
+};
+        }
+        else {    #ES
+            print_header('Los primeros 8 caracteres del nombre de usuario no son únicos');
+            print qq{
+Prefijo de base de datos en WHM/cPanel requiere que los primeros 8 caracteres de cada nombre de usuario sea único, por favor, cambie el nombre de los siguientes usuarios en el servidor de ${SRC_PANEL_NOVERSION} para evitar un conflicto durante la transferencia:
+
+PRIMEROS_8: USUARIO_COMPLETO (DOMINIO)
+};
+        }
+        &$print_dupes($dupe_first8);
+    }
+
+    if ( scalar keys %{$dupe_domains} ) {
+        if ( $OPTS->{'es'} == 0 ) {
+            print_header('Same domain owned by multiple users');
+            print qq{
+The same domain was found to be owned by multiple users which will result in a domain conflict during transfer.  Please ensure that each domain is only associated with one user on the ${SRC_PANEL_NOVERSION} server:
+
+DOMAIN: USERNAME
+};
+        }
+        else {    #ES
+            print_header('Multiples usuarios son dueños del mismo dominio');
+            print qq{
+El mismo dominio fue encontrado ser poseído por varios usuarios lo cual causara un conflicto de dominio durante la transferencia. Asegúrese de que cada dominio solamente está asociado a un usuario dentro del servidor de ${SRC_PANEL_NOVERSION}:
+
+DOMINIO: USUARIO
+};
+        }
+        &$print_dupes($dupe_domains);
+    }
+
+}
+
 sub print_reseller_username_change_info {
 
     # This has only been tested on Plesk 10, 11, and 11.5.
-    if ( $opts->{'es'} == 0 ) {
+    if ( $OPTS->{'es'} == 0 ) {
         print q{
 1. Log into Plesk as admin
 2. Click "Resellers"
@@ -2492,10 +2587,10 @@ When renaming the users, please use the following guidelines:
 * Users cannot start with a number, or with the string "test"
     };
 
-    if ( $src_panel_noversion =~ /Plesk/ ) {
+    if ( $SRC_PANEL_NOVERSION =~ /Plesk/ ) {
         print "\n\nYou can change usernames using these steps:\n";
 
-        if ( $src_panel eq 'Plesk8' ) {
+        if ( $SRC_PANEL eq 'Plesk8' ) {
             print q{
 1. Log into Plesk as "admin"
 2. Click "Domains"
@@ -2503,7 +2598,7 @@ When renaming the users, please use the following guidelines:
 4. Click on "Setup"
             };
         }
-        elsif ( $src_panel eq 'Plesk9' ) {
+        elsif ( $SRC_PANEL eq 'Plesk9' ) {
             print q{
 1. Log into Plesk as "admin"
 2. Click "Domains"
@@ -2511,7 +2606,7 @@ When renaming the users, please use the following guidelines:
 4. Click on "Web Hosting Settings"
             };
         }
-        elsif ( $src_panel eq 'Plesk10' ) {
+        elsif ( $SRC_PANEL eq 'Plesk10' ) {
             print q{
 1. Log into Plesk as "admin"
 2. Click "Domains"
@@ -2519,7 +2614,7 @@ When renaming the users, please use the following guidelines:
 4. Click on "Change Hosting Settings"
             };
         }
-        elsif ( $src_panel eq 'Plesk10SMB' ) {
+        elsif ( $SRC_PANEL eq 'Plesk10SMB' ) {
             print q{
 1. Log into Plesk as "admin"
 2. Click "Websites & Domains"
@@ -2527,7 +2622,7 @@ When renaming the users, please use the following guidelines:
 4. Change the value in the box labeled "FTP username"
             };
         }
-        elsif ( $src_panel eq 'Plesk11' ) {
+        elsif ( $SRC_PANEL eq 'Plesk11' ) {
             print q{
 1. Log into Plesk as "admin"
 2. Click "Domains"
@@ -2536,7 +2631,7 @@ When renaming the users, please use the following guidelines:
 5. Click "Change Hosting Settings"
             };
         }
-        elsif ( $src_panel eq 'Plesk12' ) {
+        elsif ( $SRC_PANEL eq 'Plesk12' ) {
             print q{
 1. Log into Plesk as "admin"
 2. Click "Domains"
@@ -2546,7 +2641,7 @@ When renaming the users, please use the following guidelines:
             };
         }
     }
-    elsif ( $src_panel =~ /Ensim/ ) {
+    elsif ( $SRC_PANEL =~ /Ensim/ ) {
         print q{
 1. Log into Ensim as "admin"
 2. Click "Site Manager"
@@ -2563,12 +2658,12 @@ Cuando cambie el nombre de los usuarios, por favor siga las siguientes directiva
 * Nombres de usuario no pueden comenzar con un número o con el string "test"
     };
 
-    if ( $src_panel_noversion =~ /Plesk/ ) {
+    if ( $SRC_PANEL_NOVERSION =~ /Plesk/ ) {
         print q{
 Usted puede cambiar los nombres de los usuarios siguiendo las siguiente instrucciones:
 };
 
-        if ( $src_panel eq 'Plesk8' ) {
+        if ( $SRC_PANEL eq 'Plesk8' ) {
             print q{
 1. Inicie sesión en Plesk como "admin"
 2. Haga clic en "Domains"
@@ -2576,7 +2671,7 @@ Usted puede cambiar los nombres de los usuarios siguiendo las siguiente instrucc
 4. Haga clic en "Setup"
             };
         }
-        elsif ( $src_panel eq 'Plesk9' ) {
+        elsif ( $SRC_PANEL eq 'Plesk9' ) {
             print q{
 1. Inicie sesión en Plesk como "admin"
 2. Haga clic en "Domains"
@@ -2584,7 +2679,7 @@ Usted puede cambiar los nombres de los usuarios siguiendo las siguiente instrucc
 4. Haga clic en "Web Hosting Settings"
             };
         }
-        elsif ( $src_panel eq 'Plesk10' ) {
+        elsif ( $SRC_PANEL eq 'Plesk10' ) {
             print q{
 1. Inicie sesión en Plesk como "admin"
 2. Haga clic en "Domains"
@@ -2592,7 +2687,7 @@ Usted puede cambiar los nombres de los usuarios siguiendo las siguiente instrucc
 4. Haga clic en "Change Hosting Settings"
             };
         }
-        elsif ( $src_panel eq 'Plesk10SMB' ) {
+        elsif ( $SRC_PANEL eq 'Plesk10SMB' ) {
             print q{
 1. Inicie sesión en Plesk como "admin"
 2. Haga clic en "Websites & Domains"
@@ -2600,7 +2695,7 @@ Usted puede cambiar los nombres de los usuarios siguiendo las siguiente instrucc
 4. Cambie el valor en la casilla "FTP username"
             };
         }
-        elsif ( $src_panel eq 'Plesk11' ) {
+        elsif ( $SRC_PANEL eq 'Plesk11' ) {
             print q{
 1. Inicie sesión en Plesk como "admin"
 2. Haga clic en "Domains"
@@ -2609,7 +2704,7 @@ Usted puede cambiar los nombres de los usuarios siguiendo las siguiente instrucc
 5. Haga clic en "Change Hosting Settings"
             };
         }
-        elsif ( $src_panel eq 'Plesk12' ) {
+        elsif ( $SRC_PANEL eq 'Plesk12' ) {
             print q{
 1. Inicie sesión en Plesk como "admin"
 2. Haga clic en "Domains"
@@ -2619,7 +2714,7 @@ Usted puede cambiar los nombres de los usuarios siguiendo las siguiente instrucc
             };
         }
     }
-    elsif ( $src_panel =~ /Ensim/ ) {
+    elsif ( $SRC_PANEL =~ /Ensim/ ) {
         print q{
 1. Inicie sesión en Ensim como "admin"
 2. Haga clic en "Site Manager"
@@ -2632,16 +2727,16 @@ sub print_parsed_ipaddr_info {
     my ( $src_dedicated_ipaddrs_used, $dst_ipaddrs_free, @sites_on_dedicated_ipaddrs ) = @_;
 
     if ( $src_dedicated_ipaddrs_used > $dst_ipaddrs_free ) {
-        if ( $opts->{'es'} == 0 ) {
+        if ( $OPTS->{'es'} == 0 ) {
             print_header('IP Addresses');
             print qq{
-On the $src_panel_noversion server, the following sites are on dedicated IP addresses:
+On the ${SRC_PANEL_NOVERSION} server, the following sites are on dedicated IP addresses:
 
 };
         }
         else {    #ES
             print_header('Direcciones IP');
-            print "En el servidor de $src_panel_noversion, los siguientes sitios tienen direcciones IP dedicadas:\n\n";
+            print "En el servidor de ${SRC_PANEL_NOVERSION}, los siguientes sitios tienen direcciones IP dedicadas:\n\n";
 
         }
 
@@ -2650,7 +2745,7 @@ On the $src_panel_noversion server, the following sites are on dedicated IP addr
             print "* $site\n";
         }
 
-        if ( $opts->{'es'} == 0 ) {
+        if ( $OPTS->{'es'} == 0 ) {
             print qq{
 
 However, the cPanel server has $dst_ipaddrs_free dedicated IP address(es) available.
@@ -2690,7 +2785,7 @@ sub print_parsed_forwarding_domain_info {
 
     return if !%forwarding_domains;
 
-    if ( $opts->{'es'} == 0 ) {
+    if ( $OPTS->{'es'} == 0 ) {
         print_header('Forwarding Domains');
 
         print q{
@@ -2711,7 +2806,7 @@ Usted puede añadirlos en WHM >> Setup/Edit Domain Forwarding (esto requiere só
 
     print "\n";
     for my $domain ( sort keys %forwarding_domains ) {
-        if ( $opts->{'es'} == 0 ) {
+        if ( $OPTS->{'es'} == 0 ) {
             print "${domain}: forwarded to -> $forwarding_domains{$domain}\n";
         }
         else {    #ES
@@ -2724,7 +2819,7 @@ sub print_parsed_nohosting_domain_info {
     my @nohosting_domains = @_;
     return if !@nohosting_domains;
 
-    if ( $opts->{'es'} == 0 ) {
+    if ( $OPTS->{'es'} == 0 ) {
         print_header('No Hosting domains');
 
         print q{
@@ -2751,32 +2846,43 @@ Con el fin de hacerlos compatibles con las herramientas de transferencia, por fa
 }
 
 sub print_parsed_tomcat_info {
-    my ( $src_tomcat, $dst_tomcat ) = @_;
+    my ( $src_tomcat, $dst_tomcat, $dst_ea4, $dst_os_ver ) = @_;
 
     if ( $src_tomcat and !$dst_tomcat ) {
         print_header('Tomcat');
-
-        if ( $opts->{'es'} == 0 ) {
-            print qq{
-
-Tomcat is installed on the $src_panel server, but not on the cPanel server.
+        if ( $dst_ea4 || version_compare( $dst_os_ver, qw( >= 7 ) ) ) {
+            if ( $OPTS->{'es'} == 0 ) {
+                print qq{
+Tomcat is installed on the ${SRC_PANEL_NOVERSION} server, but is not supported on the cPanel server due to OS and/or EasyApache 4 incompatibility.
+                };
+            }
+            else {    #ES
+                print qq{
+Tomcat esta instalado en el ${SRC_PANEL_NOVERSION} server, pero esto no es soportado en el servidor de cPanel debido a una incompatibilidad con el Sistema Operativo y/o EasyApache 4.
+                };
+            }
+        }
+        else {        # EA3 and CentOS <= 6
+            if ( $OPTS->{'es'} == 0 ) {
+                print qq{
+Tomcat is installed on the ${SRC_PANEL_NOVERSION} server, but not on the cPanel server.
 
 Do you need us to install Tomcat on the cPanel server?
 
 
 [ ] YES  [ ] NO
 
-            };
-        }
-        else {    #ES
-            print qq{
-
-Tomcat está instalado en el servidor $ src_panel, pero no en el servidor cPanel.
+                };
+            }
+            else {    #ES
+                print qq{
+Tomcat está instalado en el servidor ${SRC_PANEL_NOVERSION}, pero no en el servidor cPanel.
 
 ¿Necesiten que instalemos Tomcat en el servidor de cPanel?
 
 [ ] SI   [ ] NO
-            };
+                };
+            }
         }
     }
 }
@@ -2787,10 +2893,10 @@ sub print_parsed_coldfusion_info {
     if ( $src_coldfusion and !$dst_coldfusion ) {
         print_header('ColdFusion');
 
-        if ( $opts->{'es'} == 0 ) {
+        if ( $OPTS->{'es'} == 0 ) {
             print qq{
 
-ColdFusion appears to be running on the $src_panel server, but not on the cPanel server.
+ColdFusion appears to be running on the ${SRC_PANEL_NOVERSION} server, but not on the cPanel server.
 
 cPanel does not support the installation, configuration, or maintenance of ColdFusion.
 
@@ -2801,7 +2907,7 @@ If you need assistance with installing ColdFusion, you would need to contact you
         }
         else {    #ES
             print qq{
-ColdFusion parece estar en ejecución en el servidor $src_panel, pero no en el servidor cPanel.
+ColdFusion parece estar en ejecución en el servidor ${SRC_PANEL_NOVERSION}, pero no en el servidor cPanel.
 
 cPanel does not support the installation, configuration, or maintenance of ColdFusion.
 
@@ -2819,7 +2925,7 @@ sub print_parsed_reseller_username_conflicts {
 
     @reseller_username_conflicts = sort @reseller_username_conflicts;
 
-    if ( $opts->{'es'} == 0 ) {
+    if ( $OPTS->{'es'} == 0 ) {
         print_header('Reseller Username Conflicts');
 
         print qq{
@@ -2853,7 +2959,7 @@ sub print_parsed_mysql_openfileslimit {
     if ( $open_files_limit < 10_000 ) {
         print_header('MySQL open_files_limit');
 
-        if ( $opts->{'es'} == 0 ) {
+        if ( $OPTS->{'es'} == 0 ) {
             print qq{
 On the cPanel server, MySQL's open_files_limit is set to $open_files_limit which may be lower
 than what is necessary to successfully copy databases. I recommend increasing this to 10000
@@ -2883,7 +2989,7 @@ sub print_parsed_mysql_skip_networking {
 
     print_header('MySQL skip-networking');
 
-    if ( $opts->{'es'} == 0 ) {
+    if ( $OPTS->{'es'} == 0 ) {
         print qq{
 On the cPanel server, MySQL's skip-networking option is enabled. This can prevent databases
 from restoring properly. This option needs to be disabled throughout the migration process.
@@ -2911,15 +3017,15 @@ sub print_parsed_mysql_old_style_passwords_info {
     $cpanel_mysql_version = substr $cpanel_mysql_version, 0, 2;
 
     if ( defined $mysql_old_style_passwords == 1 and $cpanel_mysql_version >= 56 ) {
-        if ( $opts->{'es'} == 0 ) {
+        if ( $OPTS->{'es'} == 0 ) {
             print_header('MySQL 5.6 and old-passwords=1');
             print qq{
-The ${src_panel_noversion} server is using the "old-passwords=1" option. However, the cPanel server
+The ${SRC_PANEL_NOVERSION} server is using the "old-passwords=1" option. However, the cPanel server
 is using MySQL 5.6. These are not compatible. The only known workarounds at this time are:
 
 1) Set up a cPanel server with MySQL 5.1 or 5.5, OR
 
-2) Disable the old-passwords=1 option for MySQL on the ${src_panel_noversion} server and reapply
+2) Disable the old-passwords=1 option for MySQL on the ${SRC_PANEL_NOVERSION} server and reapply
 all of the MySQL users' passwords. Then verify in the mysql.user contains the new style passwords
 for each user.
             };
@@ -2927,13 +3033,13 @@ for each user.
         else {
             print_header('MySQL 5.6 y old-passwords=1');
             print qq{
-El servidor ${src_panel_noversion} está utilizando la opción "old-passwords=1". Sin embargo,
+El servidor ${SRC_PANEL_NOVERSION} está utilizando la opción "old-passwords=1". Sin embargo,
 el servidor cPanel esta usando MySQL 5.6. Estos no son compatibles. Las soluciones conocidas
 solamente en este momento son:
 
 1) Configurar un servidor cPanel con MySQL 5.1 o 5.5, o
 
-2) Deshabilitar los old-passwords=1 opción para MySQL en el servidor ${src_panel_noversion}
+2) Deshabilitar los old-passwords=1 opción para MySQL en el servidor ${SRC_PANEL_NOVERSION}
 y vuelva a aplicar todas las contraseñas de los usuarios MySQL. Compruebe en el mysql.user contiene
 las nuevas contraseñas de estilo para cada usuario.
             };
@@ -2957,7 +3063,7 @@ sub print_parsed_phpini_items {
             $addendum .= qq{
 memory_limit:
 
-    ${src_panel_noversion}: ${src_phpini_memory_limit}M
+    ${SRC_PANEL_NOVERSION}: ${src_phpini_memory_limit}M
     cPanel: ${dst_phpini_memory_limit}M
             };
         }
@@ -2968,7 +3074,7 @@ memory_limit:
             $addendum .= qq{
 post_max_size:
 
-    ${src_panel_noversion}: ${src_phpini_post_max_size}M
+    ${SRC_PANEL_NOVERSION}: ${src_phpini_post_max_size}M
     cPanel: ${dst_phpini_post_max_size}M
             };
         }
@@ -2979,7 +3085,7 @@ post_max_size:
             $addendum .= qq{
 upload_max_filesize:
 
-    ${src_panel_noversion}: ${src_phpini_upload_max_filesize}M
+    ${SRC_PANEL_NOVERSION}: ${src_phpini_upload_max_filesize}M
     cPanel: ${dst_phpini_upload_max_filesize}M
             };
         }
@@ -2990,7 +3096,7 @@ upload_max_filesize:
             $addendum .= qq{
 date.timezone:
 
-    ${src_panel_noversion}: ${src_phpini_date_timezone}
+    ${SRC_PANEL_NOVERSION}: ${src_phpini_date_timezone}
     cPanel: ${dst_phpini_date_timezone}
             };
         }
@@ -3001,14 +3107,14 @@ date.timezone:
             $addendum .= qq{
 output_buffering:
 
-    ${src_panel_noversion}: ${src_phpini_output_buffering}
+    ${SRC_PANEL_NOVERSION}: ${src_phpini_output_buffering}
     cPanel: ${dst_phpini_output_buffering}
             };
         }
     }
 
     if ($addendum) {
-        if ( $opts->{'es'} == 0 ) {
+        if ( $OPTS->{'es'} == 0 ) {
             print_header('php.ini Settings');
             print qq{
 We have checked several of the most commonly customized configuration options in php.ini and found some differences.
@@ -3045,7 +3151,7 @@ $addendum
 }
 
 sub print_htype_fwd {
-    return if ( !$is_plesk == 1 and !$is_plesk_smb10 == 1 );
+    return if ( !$IS_PLESK == 1 and !$IS_PLESK_SMB10 == 1 );
 
     my @htype_fwd = `mysql psa -Be 'SELECT domains.name, domains.htype AS hosttype, forwarding.redirect AS target FROM domains, forwarding WHERE domains.id = forwarding.dom_id'`;
     if (@htype_fwd) {
@@ -3054,14 +3160,14 @@ sub print_htype_fwd {
             $line =~ s#/$##g;
             if ( $line =~ m{ \A (\S+) \s (?:std|frm)_fwd \s (\S+) \z }xms ) {
                 my $forward = "${1}: forwarded to -> $2";
-                push @hosting_type_forward, $forward;
+                push @HOSTING_TYPE_FORWARD, $forward;
             }
         }
     }
 
-    if (@hosting_type_forward) {
+    if (@HOSTING_TYPE_FORWARD) {
         print "\nForwarded domains:\n";
-        for my $line (@hosting_type_forward) {
+        for my $line (@HOSTING_TYPE_FORWARD) {
             print "$line\n";
         }
     }
@@ -3069,21 +3175,21 @@ sub print_htype_fwd {
 }
 
 sub print_htype_none {
-    return if ( !$is_plesk == 1 and !$is_plesk_smb10 == 1 );
+    return if ( !$IS_PLESK == 1 and !$IS_PLESK_SMB10 == 1 );
 
     my @htype_none = `mysql psa -Be 'SELECT domains.name, domains.htype AS hosting FROM domains WHERE htype = "none"'`;
     if (@htype_none) {
         for my $line (@htype_none) {
             chomp $line;
             if ( $line =~ m{ \A (\S+) \s+ none \z }xms ) {
-                push @hosting_type_nohosting, $1;
+                push @HOSTING_TYPE_NOHOSTING, $1;
             }
         }
     }
 
-    if (@hosting_type_nohosting) {
+    if (@HOSTING_TYPE_NOHOSTING) {
         print "\nNo hosting domains:\n";
-        for my $line (@hosting_type_nohosting) {
+        for my $line (@HOSTING_TYPE_NOHOSTING) {
             print "$line\n";
         }
     }
@@ -3148,7 +3254,7 @@ sub check_for_ssl_certificates {
 sub check_for_dns_clustering {
     return if !-e '/var/cpanel/useclusteringdns';
 
-    if ( $opts->{'es'} == 0 ) {
+    if ( $OPTS->{'es'} == 0 ) {
         print_header('DNS CLUSTERING (for libkeyutils migrations)');
         print qq{
 The following cluster members were found to be configured on this server
@@ -3224,7 +3330,7 @@ determined by logging into WHM on the cluster server and checking it there):
 sub print_parsed_mysql_username_conflicts {
     my @mysql_username_conflicts = @_;
     my $count                    = 1;
-    if ( $opts->{'es'} == 0 ) {
+    if ( $OPTS->{'es'} == 0 ) {
         print_header('mysql Username Conflicts');
         print qq{
 mysql username conflicts have been found. To fix, please rename the user(s) specified below:
@@ -3240,7 +3346,7 @@ mysql username conflicts have been found. To fix, please rename the user(s) spec
         my ( $domain1, $user, $domain2 ) = split /:/, $conflict;
 
         # subscription1.test has mysql user "example", but there is a Plesk account named example, owned by example.com
-        if ( $opts->{'es'} == 0 ) {
+        if ( $OPTS->{'es'} == 0 ) {
             print "[CONFLICT $count] $domain1 has mysql user \"$user\" (to fix, rename ${domain2}'s \"$user\")\n";
         }
         else {    #ES
@@ -3249,7 +3355,7 @@ mysql username conflicts have been found. To fix, please rename the user(s) spec
         $count++;
     }
 
-    if ( $opts->{'es'} == 0 ) {
+    if ( $OPTS->{'es'} == 0 ) {
         print_username_change_info();
     }
     else {
@@ -3265,15 +3371,15 @@ sub check_for_missing_scp {
 }
 
 sub submit_stats_info {
-    return if !( $src_panel_version || $dst_panel_version );
+    return if !( $SRC_PANEL_VERSION || $DST_PANEL_VERSION );
     my ( $panelname, $panelver, $account_num, $RETURN, $status ) = (undef) x 5;
     my $submit_host = 'qs.tech.cpanel.net';
 
-    if ($src_panel_version) {
-        ( $panelname, $panelver ) = split( /\s/, $src_panel_version );
+    if ($SRC_PANEL_VERSION) {
+        ( $panelname, $panelver ) = split( /\s/, $SRC_PANEL_VERSION );
     }
-    if ($dst_panel_version) {
-        ( $panelname, $panelver ) = split( /\s/, $dst_panel_version );
+    if ($DST_PANEL_VERSION) {
+        ( $panelname, $panelver ) = split( /\s/, $DST_PANEL_VERSION );
     }
 
     return if !( $panelname =~ /Plesk|Ensim|DirectAdmin/ );
@@ -3282,16 +3388,7 @@ sub submit_stats_info {
     return if !( $panelmajor =~ /^\d+$/ );
     $panelminor = $panelminor ? $panelminor : '0';
 
-    if ( -f '/etc/trueuserdomains' ) {
-        chomp( $account_num = `sort -u /etc/trueuserdomains | wc -l` );
-    }
-
-    if ( $account_num && $account_num =~ /(\d+)/ ) {
-        $account_num = $1;
-    }
-    else {
-        $account_num = '0';
-    }
+    $account_num = scalar keys %{$TUD_BY_USER};
 
     my $submit = "panelname=" . $panelname . "&panelver=" . $panelmajor . "." . $panelminor . "&numaccount=" . $account_num;
     my $header = "GET /submit.cgi?" . $submit . " HTTP/1.1\r\nHost: " . $submit_host . "\r\n\r\n";
@@ -3342,7 +3439,7 @@ sub submit_stats_info {
 }
 
 sub get_ticket {
-    return $opts->{'cpmigticket'} if defined( $opts->{'cpmigticket'} );
+    return $OPTS->{'cpmigticket'} if defined( $OPTS->{'cpmigticket'} );
     my $ticket;
     if ( exists $ENV{HISTFILE} && $ENV{HISTFILE} =~ /ticket.(\d{7,10})$/ ) {
         $ticket = $1;
@@ -3350,8 +3447,9 @@ sub get_ticket {
     }
     if ( !$ticket || $ticket !~ /^\d{7,10}$/ ) {
         print "Unable to auto-detect valid migration ticket number, please enter a valid ticket number (7 to 10 digits) or leave blank to skip: ";
-        chomp( $ticket = <STDIN> );
-        if ( $ticket =~ /^\d{7,10}$/ ) {
+        $ticket = <STDIN>;
+        chomp $ticket if defined $ticket;
+        if ( defined $ticket && $ticket =~ /^\d{7,10}$/ ) {
             return $ticket;
         }
         else {
@@ -3379,7 +3477,7 @@ sub check_for_hacked_server_touchfile {
 }
 
 sub auto_create_keypair {
-    return unless $is_cpanel;
+    return unless $IS_CPANEL;
     my ( $user, $ticket ) = @_;
     return if !$user;
     return if !$ticket;
@@ -3463,7 +3561,7 @@ sub create_cpmig_user {
 
     my $fail = 0;
     foreach my $test (qw( cpmigticket cpmiguser cpmigkey )) {
-        if ( !exists( $opts->{$test} ) || ( exists( $opts->{$test} ) && !$opts->{$test} ) ) {
+        if ( !exists( $OPTS->{$test} ) || ( exists( $OPTS->{$test} ) && !$OPTS->{$test} ) ) {
             print "-- Missing " . $test . "\n";
             $fail = 1;
         }
@@ -3471,9 +3569,9 @@ sub create_cpmig_user {
 
     die if $fail;
 
-    my $user   = $opts->{'cpmiguser'};
-    my $ticket = $opts->{'cpmigticket'};
-    my $pubkey = $opts->{'cpmigkey'};
+    my $user   = $OPTS->{'cpmiguser'};
+    my $ticket = $OPTS->{'cpmigticket'};
+    my $pubkey = $OPTS->{'cpmigkey'};
     my $password;
     my $expire;
     my @user_pwent;
