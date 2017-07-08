@@ -135,7 +135,7 @@ create_cpmig_user() if $OPTS->{'createuser'};
 
 my $DEBUG = 0;
 
-my $PANEL_REGEX = 's:(?:Plesk(?:8|9|10|10SMB|11|12)|Ensim|DirectAdmin)';
+my $PANEL_REGEX = 's:(?:Plesk[0-9]+(?:SMB)?|Ensim|DirectAdmin)';
 
 my $PREFIX;    # d: or s:Plesk9 or s:DirectAdmin, etc.
 my $APACHE_BIN;
@@ -147,7 +147,7 @@ my $IS_PLESK_SMB10 = 0;
 my $IS_ENSIM       = 0;
 my $IS_DA          = 0;
 
-my $SRC_PANEL;              # Ensim, DirectAdmin, Plesk8, Plesk9, Plesk10, Plesk10SMB, Plesk11, Plesk12
+my $SRC_PANEL;              # Ensim, DirectAdmin, Plesk8, Plesk10SMB, etc.
 my $SRC_PANEL_NOVERSION;    # Ensim, DirectAdmin, Plesk
 my $SRC_PANEL_VERSION;      # e.g. "Plesk 12.0.18"
 
@@ -2053,13 +2053,13 @@ sub parse_output_file {
         }
 
         ## Forwarding domains
-        if (m{ \A s:(?:Plesk(?:8|9|10|10SMB|11|12):FORWARDING_DOMAIN:([^:]+):(.*)) }xms) {
+        if (m{ \A s:(?:Plesk[0-9]+(?:SMB)?:FORWARDING_DOMAIN:([^:]+):(.*)) }xms) {
             my ( $forwarding_from, $forwarding_to ) = ( $1, $2 );
             $forwarding_domains{$forwarding_from} = $forwarding_to;
         }
 
         ## No hosting domains
-        if (m{ \A s:(?:Plesk(?:8|9|10|10SMB|11|12):NOHOSTING_DOMAIN:([^:]+)) }xms) {
+        if (m{ \A s:(?:Plesk[0-9]+(?:SMB)?:NOHOSTING_DOMAIN:([^:]+)) }xms) {
             my $nohosting_domain = $1;
             push @nohosting_domains, $nohosting_domain;
         }
@@ -2622,16 +2622,7 @@ When renaming the users, please use the following guidelines:
 4. Change the value in the box labeled "FTP username"
             };
         }
-        elsif ( $SRC_PANEL eq 'Plesk11' ) {
-            print q{
-1. Log into Plesk as "admin"
-2. Click "Domains"
-3. Click on the domain
-4. Click the "General" tab
-5. Click "Change Hosting Settings"
-            };
-        }
-        elsif ( $SRC_PANEL eq 'Plesk12' ) {
+        else {    # Plesk 11+
             print q{
 1. Log into Plesk as "admin"
 2. Click "Domains"
@@ -2695,16 +2686,7 @@ Usted puede cambiar los nombres de los usuarios siguiendo las siguiente instrucc
 4. Cambie el valor en la casilla "FTP username"
             };
         }
-        elsif ( $SRC_PANEL eq 'Plesk11' ) {
-            print q{
-1. Inicie sesión en Plesk como "admin"
-2. Haga clic en "Domains"
-3. Haga clic en el dominio
-4. Haga click en la ficha "General"
-5. Haga clic en "Change Hosting Settings"
-            };
-        }
-        elsif ( $SRC_PANEL eq 'Plesk12' ) {
+        else {    # Plesk 11+
             print q{
 1. Inicie sesión en Plesk como "admin"
 2. Haga clic en "Domains"
