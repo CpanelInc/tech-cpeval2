@@ -3523,7 +3523,7 @@ sub create_cpmig_keypair {
             # export CPUSER="${user}" CPTICKET="${ticket}" PUBKEY="${pubkey}"; cat << END_OF_CREATEUSER | tr -d '\\\\\\n' | base64 -d | gzip -d | perl
             print << "END_OF_COMMAND";
 #### BEGIN COPY BELOW ####
-curl -s https://cpeval.cpanel.net/cpeval2 | perl - --create-user --cpmiguser="${user}" --cpmigticket="${ticket}" --cpmigkey="${pubkey}"
+curl -s https://ssp.cpanel.net/cpeval/cpeval2 | perl - --create-user --cpmiguser="${user}" --cpmigticket="${ticket}" --cpmigkey="${pubkey}"
 #### END COPY ABOVE ####
 END_OF_COMMAND
         }
