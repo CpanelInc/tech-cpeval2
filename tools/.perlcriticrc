@@ -1,0 +1,38 @@
+severity = 3
+verbose  = [%p] Line %l Column %c - %m - %e. (Severity: %s)\n
+
+[ControlStructures::ProhibitDeepNests]
+# Default severity is 3, not ready to enforce, bump it up one level.
+severity = 2
+
+[ControlStructures::ProhibitCascadingIfElse]
+# Default severity is 3, not ready to enforce, bump it up one level.
+severity = 2
+
+[-ErrorHandling::RequireCarping]
+# Carp is not a core module, we can not be sure it will exist on the target system.
+
+[InputOutput::ProhibitBacktickOperators]
+# Default severity is 3, not ready to enforce, bump it up one level.
+severity = 2
+
+[InputOutput::RequireBriefOpen]
+lines = 30
+
+[-Modules::ProhibitExcessMainComplexity]
+# cpeval2 is a monolithic perl script.  It should be a modulino.
+
+[RegularExpressions::ProhibitComplexRegexes]
+# Default severity is 3, not ready to enforce, bump it up one level.
+severity = 2
+
+[RegularExpressions::RequireExtendedFormatting]
+# Default severity is 3, not ready to enforce, bump it up one level.
+severity = 2
+
+[Subroutines::ProhibitExcessComplexity]
+# Default severity is 3, not ready to enforce, bump it up one level.
+severity = 2
+
+[-ValuesAndExpressions::ProhibitImplicitNewlines]
+# This is intentional to make some formatted output easier to read

@@ -1,5 +1,8 @@
 #!/usr/bin/perl
 
+use strict;
+use warnings;
+
 my $pod_data = << 'END_POD';
 =head1 NAME
 
@@ -117,8 +120,6 @@ END_POD
 # (3) parse_output_file()
 # (4) print_parsed_php_info( $src_php, $dst_php )
 
-use strict;
-use warnings;
 use Getopt::Long;
 use IPC::Open3;
 use IO::Socket::INET;
@@ -266,29 +267,6 @@ if ( $IS_CPANEL == 1 ) {
     check_for_dns_clustering();
 }
 
-unless ( $OPTS->{'inputfile'} ) {
-    if ( $IS_CPANEL == 1 ) {
-        my $mailutil_missing_libs = 0;
-
-        if ( -e '/usr/bin/ldd' and -x '/usr/bin/ldd' ) {
-            if ( my @ldd_mailutil = `ldd /usr/local/cpanel/Whostmgr/Pkgacct/3rdparty/mbx2mbox/mailutil` ) {
-                for my $line (@ldd_mailutil) {
-                    chomp $line;
-                    if ( $line =~ /not found/ ) {
-                        $mailutil_missing_libs = 1;
-                    }
-                }
-
-                if ( $mailutil_missing_libs == 1 ) {
-                    print_header('Ensim');
-                    print "/u/l/c/Whostmgr/Pkgacct/3rdparty/mbx2mbox/mailutil is missing libs (use 'ldd' to see which are missing)\n";
-                    print "Copying accounts from Ensim? Check FB 72981 first! Email may not get copied properly otherwise.\n";
-                }
-            }
-        }
-    }
-}
-
 submit_stats_info();
 
 check_for_missing_scp();
@@ -297,10 +275,14 @@ auto_create_keypair( $CPMIGUSER, $TICKET ) unless $OPTS->{'inputfile'};
 
 ##########
 
-sub version_cmp {    # should only be used by version_compare()
-    no warnings 'uninitialized';    # Prevent uninitialized value warnings when not using all 4 values
-    my ( $a1, $b1, $c1, $d1 ) = split /[\._]/, $_[0];
-    my ( $a2, $b2, $c2, $d2 ) = split /[\._]/, $_[1];
+sub _version_cmp {
+    ## no critic (AmbiguousNames) # Not ambiguous, just simple.
+    my ( $first, $second ) = @_;
+    my ( $a1, $b1, $c1, $d1 ) = split /[\._]/, $first;
+    my ( $a2, $b2, $c2, $d2 ) = split /[\._]/, $second;
+    for my $ref ( \$a1, \$b1, \$c1, \$d1, \$a2, \$b2, \$c2, \$d2, ) {    # Fill empties with 0
+        $$ref = 0 unless defined $$ref;
+    }
     return $a1 <=> $a2 || $b1 <=> $b2 || $c1 <=> $c2 || $d1 <=> $d2;
 }
 
@@ -316,21 +298,21 @@ sub version_compare {
     my %modes = (
         '>' => sub {
             return if $_[0] eq $_[1];
-            return version_cmp(@_) > 0;
+            return _version_cmp(@_) > 0;
         },
         '<' => sub {
             return if $_[0] eq $_[1];
-            return version_cmp(@_) < 0;
+            return _version_cmp(@_) < 0;
         },
-        '==' => sub { return $_[0] eq $_[1] || version_cmp(@_) == 0; },
-        '!=' => sub { return $_[0] ne $_[1] && version_cmp(@_) != 0; },
+        '==' => sub { return $_[0] eq $_[1] || _version_cmp(@_) == 0; },
+        '!=' => sub { return $_[0] ne $_[1] && _version_cmp(@_) != 0; },
         '>=' => sub {
             return 1 if $_[0] eq $_[1];
-            return version_cmp(@_) >= 0;
+            return _version_cmp(@_) >= 0;
         },
         '<=' => sub {
             return 1 if $_[0] eq $_[1];
-            return version_cmp(@_) <= 0;
+            return _version_cmp(@_) <= 0;
         }
     );
     return if ( !exists $modes{$mode} );
@@ -339,6 +321,7 @@ sub version_compare {
 
 sub print_news_cpanel {
     print q{};
+    return;
 }
 
 sub print_news_plesk {
@@ -347,11 +330,13 @@ sub print_news_plesk {
     #    };
     #
     #    sleep 3;
+    return;
 }
 
 sub print_news_ensim {
 
     # No current blockers listed.  Last removed was Case 107517.
+    return;
 }
 
 sub print_news_da {
@@ -360,6 +345,7 @@ sub print_news_da {
     #    };
     #
     #    sleep 3;
+    return;
 }
 
 sub mysql_test {
@@ -370,13 +356,14 @@ sub mysql_test {
 sub print_header {
     my $text = shift;
     print "\n" . '=' x 50 . "\n$text\n" . '=' x 50 . "\n";
+    return;
 }
 
 ## determine the control panel, and set the prefix
-sub get_control_panel_and_set_prefix {
+sub get_control_panel_and_set_prefix {    ## no critic (ExcessComplexity)
 
     # CPANEL
-    if ( -f '/usr/local/cpanel/cpanel' ) {
+    if ( -f '/usr/local/cpanel/cpanel' ) {    ## no critic (CascadingIfElse)
         $PREFIX    = 'd:';
         $IS_CPANEL = 1;
     }
@@ -387,40 +374,42 @@ sub get_control_panel_and_set_prefix {
             my @dir_contents;
 
             opendir( my $dir_fh, '/etc/sw/keys/keys' );
-            @dir_contents = grep { !/^\.(\.?)$/ } readdir $dir_fh;
+            @dir_contents = grep { !/ \A \. \.? \Z /x } readdir $dir_fh;
             closedir $dir_fh;
 
             if (@dir_contents) {
                 my $plesk_key = pop @dir_contents;
 
-                open my $key_fh, '<', "/etc/sw/keys/keys/$plesk_key";
-                while (<$key_fh>) {
-                    if (/Small Business Panel 10/) {
-                        $PREFIX         = 's:Plesk10SMB:';
-                        $IS_PLESK_SMB10 = 1;
-                        last;
+                if ( open my $key_fh, '<', "/etc/sw/keys/keys/$plesk_key" ) {
+                    while (<$key_fh>) {
+                        if (/Small Business Panel 10/) {
+                            $PREFIX         = 's:Plesk10SMB:';
+                            $IS_PLESK_SMB10 = 1;
+                            last;
+                        }
                     }
+                    close $key_fh;
                 }
-                close $key_fh;
             }
         }
 
         if ( !$PREFIX ) {
-            open my $psa_fh, '<', '/usr/local/psa/version';
-            while (<$psa_fh>) {
-                if (m{ \A (\d+)\.(\d+)? }xms) {
-                    $PLESK_MAJOR_VERSION = $1;
-                    $PLESK_MINOR_VERSION = defined $2 ? $2 : '0';
-                    if ( $PLESK_MAJOR_VERSION == 11 and $PLESK_MINOR_VERSION and $PLESK_MINOR_VERSION >= 5 ) {
+            if ( open my $psa_fh, '<', '/usr/local/psa/version' ) {
+                while (<$psa_fh>) {
+                    if (m{ \A (\d+)\.(\d+)? }xms) {
+                        $PLESK_MAJOR_VERSION = $1;
+                        $PLESK_MINOR_VERSION = defined $2 ? $2 : '0';
+                        if ( $PLESK_MAJOR_VERSION == 11 and $PLESK_MINOR_VERSION and $PLESK_MINOR_VERSION >= 5 ) {
 
-                        #                        print_plesk_version_unsupported( "${plesk_major_version}.${plesk_minor_version}" );
+                            #                        print_plesk_version_unsupported( "${plesk_major_version}.${plesk_minor_version}" );
+                        }
+
+                        $PREFIX   = 's:Plesk' . $PLESK_MAJOR_VERSION . ':';
+                        $IS_PLESK = 1;
                     }
-
-                    $PREFIX   = 's:Plesk' . $PLESK_MAJOR_VERSION . ':';
-                    $IS_PLESK = 1;
                 }
+                close $psa_fh;
             }
-            close $psa_fh;
         }
     }
 
@@ -435,6 +424,8 @@ sub get_control_panel_and_set_prefix {
         $PREFIX = 's:DirectAdmin:';
         $IS_DA  = 1;
     }
+
+    # Not one of the above
     else {
         die "[!] Unknown control panel\n";
     }
@@ -443,6 +434,7 @@ sub get_control_panel_and_set_prefix {
     print_news_plesk()  if ( $IS_PLESK == 1 or $IS_PLESK_SMB10 == 1 );
     print_news_ensim()  if ( $IS_ENSIM == 1 );
     print_news_da()     if ( $IS_DA == 1 );
+    return;
 }
 
 sub check_trueuserdomains {
@@ -456,13 +448,13 @@ sub check_trueuserdomains {
         if ( -f $tud ) {
             my $age = int( ( time() - ( stat(_) )[9] ) / 60 );
             die("${tud} exists, but unable to determine modification time!\n\n") unless defined($age);
-            if ( !$OPTS->{'updateuserdomains'} and $age <= $max_age ) {
+            if ( not $OPTS->{'updateuserdomains'} and $age <= $max_age ) {
                 print "\n${tud} is less than ${max_age} minutes old, not auto-updating.\n";
                 print "Use cpeval2 --updateuserdomains to force an update.\n";
                 $skip_update = 1;
             }
         }
-        if ( $OPTS->{'updateuserdomains'} or !$skip_update ) {
+        if ( $OPTS->{'updateuserdomains'} or not $skip_update ) {
             print "${tud} doesn't exist, is more than ${max_age} minutes old, or you forced an update.\n";
             print "\nDownloading and running updateuserdomains-universal via curl...\n";
             if ( system( 'curl -s --connect-timeout 30 --max-time 60  ' . $uudu . ' | perl' ) != 0 ) {
@@ -478,31 +470,34 @@ sub check_trueuserdomains {
         }
     }
 
-    if ( !-f $tud or !-f $dip ) {
+    if ( not -f $tud or not -f $dip ) {
         die "\n${tud} OR ${dip} missing!\nUse updateuserdomains to generate them.\n\n";
     }
 
     print "\n";
+    return;
 }
 
 sub check_destination_var_usage {
     return if $IS_CPANEL == 0;
 
     my $var_usage;
-    open my $df_fh, '-|', '/bin/df', '-hP', '/var';
-    while (<$df_fh>) {
+    if ( open my $df_fh, '-|', '/bin/df', '-hP', '/var' ) {
+        while (<$df_fh>) {
 
-        # Filesystem            Size  Used Avail Use% Mounted on
-        # /dev/simfs             20G  6.2G   14G  31% /
-        if (m# \A /(?:\S+) \s+ ([0-9A-Z\.]+) \s+ ([0-9A-Z\.]+) \s+ ([0-9A-Z\.]+) \s+ ([0-9]+)% \s+ (\S+) #xms) {
-            $var_usage = "[Size: $1] [Used: $2] [Avail: $3] [Use%: $4] [Mount point: $5]\n";
+            # Filesystem            Size  Used Avail Use% Mounted on
+            # /dev/simfs             20G  6.2G   14G  31% /
+            if (m# \A /(?:\S+) \s+ ([0-9A-Z\.]+) \s+ ([0-9A-Z\.]+) \s+ ([0-9A-Z\.]+) \s+ ([0-9]+)% \s+ (\S+) #xms) {
+                $var_usage = "[Size: $1] [Used: $2] [Avail: $3] [Use%: $4] [Mount point: $5]\n";
+            }
         }
+        close $df_fh;
     }
-    close $df_fh;
 
     if ($var_usage) {
         print_format( '/var', $var_usage );
     }
+    return;
 }
 
 sub print_plesk_version_unsupported {
@@ -628,6 +623,7 @@ sub verify_mysql_connectivity {
             }
         }
     }
+    return;
 }
 
 ## print control panel version
@@ -666,9 +662,10 @@ sub print_control_panel_info {
         }
     }
     elsif ($IS_ENSIM) {
-        my $panel_version = `/usr/bin/getapplversion` or die("Unable to discern Ensim version");
-        $panel_version =~ /^([0-9]{1,2}\.[0-9]{1,2}\.[0-9]{1,2})-.*$/;
-        $panel_version = $1;
+        $panel_version = `/usr/bin/getapplversion` or die("Unable to discern Ensim version");
+        if ( $panel_version =~ /^([0-9]{1,2}\.[0-9]{1,2}\.[0-9]{1,2})-.*$/ ) {
+            $panel_version = $1;
+        }
 
         if ($panel_version) {
             $SRC_PANEL_VERSION = "Ensim " . $panel_version;
@@ -679,8 +676,9 @@ sub print_control_panel_info {
     }
     elsif ($IS_DA) {
         $panel_version = `/usr/local/directadmin/directadmin v` or die("Unable to discern DirectAdmin version");
-        $panel_version =~ /^Version: DirectAdmin v.([0-9]{1,2}\.[0-9]{1,2}\.[0-9]{1,2})$/;
-        $panel_version = $1;
+        if ( $panel_version =~ /^Version: DirectAdmin v.([0-9]{1,2}\.[0-9]{1,2}\.[0-9]{1,2})$/ ) {
+            $panel_version = $1;
+        }
 
         if ($panel_version) {
             $SRC_PANEL_VERSION = "DirectAdmin " . $panel_version;
@@ -692,7 +690,7 @@ sub print_control_panel_info {
 
     print "[ " . $DST_PANEL_VERSION . " ]\n" if $DST_PANEL_VERSION;
     print "[ " . $SRC_PANEL_VERSION . " ]\n" if $SRC_PANEL_VERSION;
-
+    return;
 }
 
 sub print_os_info {
@@ -738,12 +736,14 @@ sub print_os_info {
         );
 
         for my $release_file (@release_files) {
-            if ( -e '/etc/' . $release_file ) {
-                if ( open my $rel_fh, '<', '/etc/' . $release_file ) {
+            my $release_file_path = '/etc/' . $release_file;
+            if ( -e $release_file_path ) {
+                if ( open my $rel_fh, '<', $release_file_path ) {
                     while (<$rel_fh>) {
                         if    (/(\d+\.\d+)/) { $OS_VERSION = $1; last; }
                         elsif (/(\d+)/)      { $OS_VERSION = $1; last; }
                     }
+                    close $rel_fh;
                 }
                 $release_file =~ s/release//g;
                 $release_file =~ s/version//g;
@@ -762,16 +762,22 @@ sub print_os_info {
 
     #    print 'OS: ' . "$os\n";
     print_format( 'OS', $os );
+    return;
 }
 
 sub print_format {
     my ( $str1, $str2 ) = @_;
+
+    # It's going to be difficult to replace format, we don't know if the target system we're running on has Perl6::Form or other replacements, so silence perlcritic about this.
+    ## no critic (CommaSeparatedStatements, Formats)
     format =
 @>>>>>>>>>>>>>>>>>>>> @< @<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 $str1, ':', $str2
 .
 
     write;
+    ## use critic
+    return;
 }
 
 sub print_perl_info {
@@ -792,12 +798,17 @@ sub print_perl_info {
     }
 
     print_format( 'Perl', $perl_version );
+    return;
 }
 
 sub print_mysql_info {
     my $mysql_version = `mysql --version`;
-    $mysql_version =~ /Ver [0-9]{1,2}\.[0-9]{1,2} Distrib ([0-9]{1,2}\.[0-9]{1,2}\.[0-9]{1,2}[a-z]?)/;
-    $mysql_version = $1 ? $1 : 'Unknown';
+    if ( $mysql_version =~ /Ver [0-9]{1,2}\.[0-9]{1,2} Distrib ([0-9]{1,2}\.[0-9]{1,2}\.[0-9]{1,2}[a-z]?)/ ) {
+        $mysql_version = $1;
+    }
+    else {
+        $mysql_version = 'Unknown';
+    }
 
     if ( $mysql_version ne 'Unknown' ) {
         if ( version_compare( $mysql_version, qw( < 4.1 ) ) ) {
@@ -806,6 +817,7 @@ sub print_mysql_info {
     }
 
     print_format( 'MySQL', $mysql_version );
+    return;
 }
 
 sub print_php_info {
@@ -857,6 +869,7 @@ sub print_php_info {
     }
 
     print_format( 'PHP', $php_version );
+    return;
 }
 
 sub print_apache_info {
@@ -881,6 +894,7 @@ sub print_apache_info {
     }
 
     print_format( 'Apache', $apache_version );
+    return;
 }
 
 sub mem_rounded {
@@ -922,6 +936,7 @@ sub print_cpu_info {
         return;
     }
     print_format( 'CPU', $model . ' w/ ' . $numcores . ' cores' );
+    return;
 }
 
 sub print_mem_info {
@@ -946,13 +961,14 @@ sub print_mem_info {
     }
     else {
         my $in = `free -m`;
-        $in =~ /Mem:[\s]+([0-9]+)[\s]+[0-9]+[\s]+([0-9]+)[\s]+[0-9]+[\s]+[0-9]+[\s]+([0-9]+)/;
-        my $total = $1;
-        my $free  = $2;
-        my $cache = $3;
-
-        print_format( 'Memory', "${total}MB (Free: " . ( $free + $cache ) . "MB)" );
+        if ( $in =~ /Mem:[\s]+([0-9]+)[\s]+[0-9]+[\s]+([0-9]+)[\s]+[0-9]+[\s]+[0-9]+[\s]+([0-9]+)/ ) {
+            my $total = $1;
+            my $free  = $2;
+            my $cache = $3;
+            print_format( 'Memory', "${total}MB (Free: " . ( $free + $cache ) . "MB)" );
+        }
     }
+    return;
 }
 
 sub print_number_of_accounts {
@@ -966,6 +982,7 @@ sub print_number_of_accounts {
     }
 
     print_format( 'Accounts', $account_num );
+    return;
 }
 
 sub print_dedicated_ipaddrs {
@@ -973,9 +990,11 @@ sub print_dedicated_ipaddrs {
     my ( @usedips, @freeips );
 
     # From the earlier check, /etc/domainips should exist.
-    open( FILE, "/etc/domainips" );
-    while (<FILE>) {
-        push( @usedips, ' ' . $_ ) if $_ =~ /^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}: /;
+    if ( open( my $domainips_fh, '<', '/etc/domainips' ) ) {
+        while (<$domainips_fh>) {
+            push( @usedips, ' ' . $_ ) if $_ =~ /^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}: /;
+        }
+        close $domainips_fh;
     }
 
     return if ( scalar @usedips == 0 );
@@ -1000,15 +1019,17 @@ sub print_dedicated_ipaddrs {
     }
 
     print_format( 'Dedicated IPAddrs', $result );
+    return;
 }
 
 sub print_mysql_db_count {
     my @alldbs = split( "\n", sqlcmd('show databases;') );
-    my @userdbs = grep { !/^(logaholicDB_.+|information_schema|performance_schema|cphulkd|eximstats|horde|leechprotect|mysql|(da_)?roundcube|atmail|admin_appl|psa|phpmyadmin_.+|sitebuilder5)$/ } @alldbs;
+    my @userdbs = grep { !/^(?:logaholicDB_.+|information_schema|performance_schema|cphulkd|eximstats|horde|leechprotect|mysql|(?:da_)?roundcube|atmail|admin_appl|psa|phpmyadmin_.+|sitebuilder5)$/ } @alldbs;
 
     if ( scalar @userdbs > 0 ) {
         print_format( 'MySQL DBs', @alldbs . " (" . @userdbs . " User Created)" );
     }
+    return;
 }
 
 sub sqlcmd {
@@ -1036,7 +1057,7 @@ sub sqlcmd {
     my $pid = IPC::Open3::open3( $wtrfh, $rdrfh, $rdrfh, $mysql, '-N', '-u', $user, "--password=$pass" );
     print {$wtrfh} "$cmd\n";
     close($wtrfh);
-    local $/;
+    local $/;    ## no critic (InitializationForLocalVars)
     $result = readline($rdrfh);
     waitpid( $pid, 0 );
 
@@ -1047,28 +1068,31 @@ sub sqlcmd {
 }
 
 sub get_mysql_auth {
-    my $data = {};
+    my $data            = {};
+    my $my_cnf_path     = '/root/.my.cnf';
+    my $psa_shadow_path = '/etc/psa/.psa.shadow';
     if ( $IS_CPANEL == 1 ) {
-        if ( -f "/root/.my.cnf" ) {
+        if ( -f $my_cnf_path ) {
             my $mycnf;
-            open( FILE, "/root/.my.cnf" );
-            while (<FILE>) {
-                $mycnf .= $_;
-            }
-            close(FILE);
-
-            $mycnf =~ /\[client\] (.+?) (\n \s* \[ | $)/xs;
-
-            my @clientblock = split "\n", $1;
-            foreach (@clientblock) {
-                chomp($_);
-                my ( $key, $value ) = split /=/, $_, 2;
-                next if !$value;
-                if ( $value =~ /^['"](.+)['"]$/ ) {
-                    $data->{$key} = $1;
+            if ( open( my $mycnf_fh, '<', $my_cnf_path ) ) {
+                while (<$mycnf_fh>) {
+                    $mycnf .= $_;
                 }
-                else {
-                    $data->{$key} = $value;
+                close $mycnf_fh;
+            }
+
+            if ( $mycnf =~ /\[client\] (.+?) (\n \s* \[ | $)/xs ) {
+                my @clientblock = split "\n", $1;
+                foreach (@clientblock) {
+                    chomp($_);
+                    my ( $key, $value ) = split /=/, $_, 2;
+                    next if !$value;
+                    if ( $value =~ /^['"](.+)['"]$/ ) {
+                        $data->{$key} = $1;
+                    }
+                    else {
+                        $data->{$key} = $value;
+                    }
                 }
             }
         }
@@ -1077,19 +1101,20 @@ sub get_mysql_auth {
         }
     }
     elsif ( $IS_PLESK == 1 or $IS_PLESK_SMB10 == 1 ) {
-        if ( -f "/etc/psa/.psa.shadow" ) {
+        if ( -f $psa_shadow_path ) {
             my $psa;
-            open( FILE, "/etc/psa/.psa.shadow" );
-            while (<FILE>) {
-                $psa .= $_;
+            if ( open( my $psa_fh, '<', $psa_shadow_path ) ) {
+                while (<$psa_fh>) {
+                    $psa .= $_;
+                }
+                close $psa_fh;
             }
-            close(FILE);
             chomp($psa);
             $data->{'user'} = 'admin';
             $data->{'pass'} = $psa;
         }
         else {
-            die('/etc/psa/.psa.shadow missing');
+            die( $psa_shadow_path . '  missing' );
         }
     }
     elsif ( $IS_ENSIM == 1 ) {
@@ -1139,6 +1164,7 @@ sub get_mysql_auth {
     else {
         return $data;
     }
+    return;
 }
 
 sub print_postgres_db_count {
@@ -1147,7 +1173,7 @@ sub print_postgres_db_count {
             if ( my $rawsql = psqlcmd("select datname from pg_database") ) {
                 if ( $rawsql =~ /^Postgres Fatal/m ) { return "\n$rawsql" }
                 my @alldbs = split( '\n', $rawsql );
-                my @userdbs = grep { !/^(postgres|template[0-1])$/ } @alldbs;
+                my @userdbs = grep { !/^(?:postgres|template[0-1])$/ } @alldbs;
 
                 if ( scalar @userdbs > 0 ) {
                     print_format( 'Postgres DBs', @alldbs . " (" . @userdbs . " User Created)" );
@@ -1155,6 +1181,7 @@ sub print_postgres_db_count {
             }
         }
     }
+    return;
 }
 
 sub find_psql_socket {
@@ -1181,18 +1208,19 @@ sub psqlcmd {
 
     #my $pid = IPC::Open3::open3( undef, $rdrfh, undef, 'su', $user, '-c', $psqlcmd );
     my $pid = IPC::Open3::open3( undef, $rdrfh, undef, $psqlcmd );
-    local $/;
+    local $/;    ## no critic (InitializationForLocalVars)
     $result = readline($rdrfh);
     waitpid( $pid, 0 );
-    if ( $result =~ /\n\(([0-9]+) rows\)$/m ) {
-        $result =~ /.*\n(([^\n]+\n){$1})\([0-9]+ rows\)$/m;
-        $result = $1;
+    if ( $result =~ /\n\([0-9]+ rows\)$/m ) {
+        if ( $result =~ /.*\n([^\n]+\n{$1})\([0-9]+ rows\)$/m ) {
+            $result = $1;
+        }
     }
     elsif ( $result =~ /^(psql|su):/ ) {
         if ( $result =~ /FATAL:[\s]+database "$user" does not exist/ ) {
 
             # It's installed and running, but not configured.  Return undef.
-            return undef;
+            return;
         }
         else {
             chomp $result;
@@ -1204,15 +1232,17 @@ sub psqlcmd {
 }
 
 sub get_psql_auth {
-    my $data = {};
+    my $data        = {};
+    my $pgpass_path = '/root/.pgpass';
     if ( $IS_CPANEL == 1 ) {
-        if ( -f "/root/.pgpass" ) {
+        if ( -f $pgpass_path ) {
             my $mycnf;
-            open( FILE, "/root/.pgpass" );
-            while (<FILE>) {
-                $mycnf .= $_;
+            if ( open( my $pgpass_fh, '<', $pgpass_path ) ) {
+                while (<$pgpass_fh>) {
+                    $mycnf .= $_;
+                }
+                close $pgpass_fh;
             }
-            close(FILE);
             if ( $mycnf =~ /[^:]+:[^:]+:[^:]+:postgres:([\S]+)/m ) {
                 $data->{'user'} = "postgres";
                 $data->{'pass'} = $1;
@@ -1300,26 +1330,23 @@ sub print_custom_apache_modules {
     );
 
     my $apachem = `$APACHE_BIN -l 2> /dev/null`;
-    $apachem =~ /in modules:\s([^\[]+)[\s]?$/m;
-
-    my @mods = split( "\n", $1 );
-    foreach (@mods) {
-        my $mod = $_;
-        $mod =~ s/^\s+//;
-        push( @custom, " " . $mod . "\n" ) unless grep ( /^$mod$/, @base );
+    if ( $apachem =~ /in modules:\s([^\[]+)[\s]?$/m ) {
+        my @mods = split( "\n", $1 );
+        foreach (@mods) {
+            my $mod = $_;
+            $mod =~ s/^\s+//;
+            push( @custom, " " . $mod . "\n" ) unless grep { /^$mod$/ } @base;
+        }
     }
 
     return if !@custom;
-
-    if ( !@custom ) {
-        push( @custom, " -None-\n" );
-    }
 
     print "\nNon-default Apache Modules:\n";
     for my $module (@custom) {
         chomp $module;
         print "$module\n";
     }
+    return;
 }
 
 sub print_custom_php_modules {
@@ -1390,7 +1417,7 @@ sub print_custom_php_modules {
         my @mods = split( "\n", $1 );
         foreach (@mods) {
             my $mod = $_;
-            push( @custom, " " . $mod . "\n" ) unless grep ( /^$mod$/, @base );
+            push( @custom, " " . $mod . "\n" ) unless grep { /^$mod$/ } @base;
         }
     }
 
@@ -1405,6 +1432,7 @@ sub print_custom_php_modules {
         chomp $module;
         print "$module\n";
     }
+    return;
 }
 
 sub _find_bin {
@@ -1433,6 +1461,7 @@ sub _find_bin {
     if ( $bin =~ /\// ) {
         return $bin;
     }
+    return;
 }
 
 sub _get_trueuserdomains_hashrefs {
@@ -1445,12 +1474,15 @@ sub _get_trueuserdomains_hashrefs {
         while (<$tud_fh>) {
             chomp;
             my ( $domain, $user ) = ( split( /\s*:\s*/, $_, 3 ) )[ 0, 1 ];
+            next unless defined $domain;
+            next unless defined $user;
 
             # strip site number from Ensim usernames
             $user =~ s/\^site(\d+)//g;
             push @{ $tud_by_user_ref->{$user} },     $domain;
             push @{ $tud_by_domain_ref->{$domain} }, $user;
         }
+        close $tud_fh;
     }
     else {
         die "Could not open ${tud}: $!\n";
@@ -1465,11 +1497,13 @@ sub print_prefixed_panel_info {
     elsif ($DST_PANEL_VERSION) {
         print $PREFIX . 'VERSION:' . $DST_PANEL_VERSION . "\n";
     }
+    return;
 }
 
 sub print_prefixed_os_info {
     print $PREFIX . 'OS_DIST:' . $OS_DIST . "\n"       if defined($OS_DIST);
     print $PREFIX . 'OS_VERSION:' . $OS_VERSION . "\n" if defined($OS_VERSION);
+    return;
 }
 
 sub print_prefixed_php_info {
@@ -1485,13 +1519,17 @@ sub print_prefixed_php_info {
 
     print $PREFIX . "PHP:" . $php_version . "\n";
     print $PREFIX . "EA4:" . $ea4 . "\n" if $IS_CPANEL;
-
+    return;
 }
 
 sub print_prefixed_mysql_info {
     my $mysql_version = `mysql --version`;
-    $mysql_version =~ /Ver [0-9]{1,2}\.[0-9]{1,2} Distrib ([0-9]{1,2}\.[0-9]{1,2}\.[0-9]{1,2}[a-z]?)/;
-    $mysql_version = $1 ? $1 : 'Unknown';
+    if ( $mysql_version =~ /Ver [0-9]{1,2}\.[0-9]{1,2} Distrib ([0-9]{1,2}\.[0-9]{1,2}\.[0-9]{1,2}[a-z]?)/ ) {
+        $mysql_version = $1;
+    }
+    else {
+        $mysql_version = 'Unknown';
+    }
 
     if ( $mysql_version ne 'Unknown' ) {
         if ( version_compare( $mysql_version, qw( < 4.1 ) ) ) {
@@ -1501,6 +1539,7 @@ sub print_prefixed_mysql_info {
             print $PREFIX . 'MYSQL:' . "$mysql_version\n";
         }
     }
+    return;
 }
 
 sub print_prefixed_bad_username_info {
@@ -1512,6 +1551,7 @@ sub print_prefixed_bad_username_info {
             }
         }
     }
+    return;
 }
 
 sub print_prefixed_duplicate_users {    # WHM 11.44+ requires first 8 characters of username to be unique for database prefixing
@@ -1535,6 +1575,7 @@ sub print_prefixed_duplicate_users {    # WHM 11.44+ requires first 8 characters
     &$print_dupes( $TUD_BY_USER,   'DUPLICATE_USER' );
     &$print_dupes( \%first8,       'DUPLICATE_FIRST8' );
     &$print_dupes( $TUD_BY_DOMAIN, 'DUPLICATE_DOMAIN' );
+    return;
 }
 
 sub print_prefixed_dedicated_ip_addr_info {
@@ -1562,7 +1603,7 @@ sub print_prefixed_dedicated_ip_addr_info {
     elsif ( $PREFIX =~ /^d/ ) {
         if ( open my $command_fh, '-|', '/scripts/ipusage' ) {
             while (<$command_fh>) {
-                if (m{ \A (\d+)\.(\d+)\.(\d+)\.(\d+) \s+ \z }xms) {
+                if (m{ \A \d+ \. \d+ \. \d+ \. \d+ \s+ \z }xms) {
                     push @cpanel_free_ipaddrs, $_;
                 }
             }
@@ -1573,6 +1614,7 @@ sub print_prefixed_dedicated_ip_addr_info {
 
         print $PREFIX . 'IPADDRS_FREE:' . $cpanel_free_ipaddrs . "\n";
     }
+    return;
 }
 
 sub print_prefixed_hosting_types {
@@ -1589,6 +1631,7 @@ sub print_prefixed_hosting_types {
             print $PREFIX . 'NOHOSTING_DOMAIN:' . $domain . "\n";
         }
     }
+    return;
 }
 
 sub print_prefixed_tomcat_info {
@@ -1601,6 +1644,7 @@ sub print_prefixed_tomcat_info {
     else {
         print $PREFIX . 'TOMCAT:' . '0' . "\n";
     }
+    return;
 }
 
 sub print_prefixed_coldfusion_info {
@@ -1613,6 +1657,7 @@ sub print_prefixed_coldfusion_info {
     else {
         print $PREFIX . 'COLDFUSION:' . '0' . "\n";
     }
+    return;
 }
 
 sub print_prefixed_reseller_username_conflicts {
@@ -1621,6 +1666,7 @@ sub print_prefixed_reseller_username_conflicts {
     for my $reseller (@PLESK_RESELLER_USERNAME_CONFLICTS) {
         print $PREFIX . 'RESELLER_CONFLICT:' . $reseller . "\n";
     }
+    return;
 }
 
 sub print_prefixed_user_config_problems {
@@ -1645,6 +1691,7 @@ sub print_prefixed_user_config_problems {
             close $dh;
         }
     }
+    return;
 }
 
 sub print_prefixed_php_information {
@@ -1658,7 +1705,7 @@ sub print_prefixed_php_information {
         if ( $IS_PLESK == 1 or $IS_PLESK_SMB10 == 1 or $IS_ENSIM == 1 ) {
             $phpini = '/etc/php.ini';
         }
-        elsif ( $IS_DA == 1 or ( $IS_CPANEL == 1 and !-e '/etc/cpanel/ea4/is_ea4' ) ) {
+        elsif ( $IS_DA == 1 or ( $IS_CPANEL == 1 and not -e '/etc/cpanel/ea4/is_ea4' ) ) {
             $phpini = '/usr/local/lib/php.ini';
         }
         if ( defined($phpini) && open my $file_fh, '<', $phpini ) {
@@ -1701,7 +1748,7 @@ sub print_prefixed_php_information {
         $printkey =~ tr/./_/;
         print $PREFIX . "PHPINI_" . $printkey . ":" . $ini{$key} . "\n";
     }
-
+    return;
 }
 
 sub print_prefixed_cpanel_eula_accepted_check {
@@ -1722,6 +1769,7 @@ sub print_prefixed_cpanel_eula_accepted_check {
         print $PREFIX . 'EULA:' . '1' . "\n";
         $EULA_ACCEPTED = 1;
     }
+    return;
 }
 
 sub print_prefixed_mysql_username_conflict_info {
@@ -1766,6 +1814,7 @@ sub print_prefixed_mysql_username_conflict_info {
             }
         }
     }
+    return;
 }
 
 sub print_prefixed_mysql_openfileslimit {
@@ -1779,6 +1828,7 @@ sub print_prefixed_mysql_openfileslimit {
     chomp $open_files_limit;
 
     print $PREFIX . 'MYSQL_OPEN_FILES_LIMIT:' . $open_files_limit . "\n";
+    return;
 }
 
 sub print_prefixed_mysql_skip_networking {
@@ -1794,8 +1844,9 @@ sub print_prefixed_mysql_skip_networking {
                 last;
             }
         }
-        close $my_cnf;
+        close $my_cnf_fh;
     }
+    return;
 }
 
 sub print_prefixed_mysql_old_style_passwords_info {
@@ -1814,8 +1865,9 @@ sub print_prefixed_mysql_old_style_passwords_info {
                 last;
             }
         }
-        close $my_cnf;
+        close $my_cnf_fh;
     }
+    return;
 }
 
 sub print_plesk_duplicate_email_users {
@@ -1828,16 +1880,12 @@ sub print_plesk_duplicate_email_users {
     return if !-d $maildir;
 
     my %dupes = ();
-    my @duplicate_mail_users;
     my @output;
 
     ## get list of mail domains
     opendir( my $maildir_fh, $maildir );
     my @domains = grep { !/^\.\.?/ } readdir $maildir_fh;
     closedir $maildir_fh;
-
-    my @emailusers;
-    my $extra_users;
 
     ## get list of mail users
     for my $domain (@domains) {
@@ -1853,7 +1901,9 @@ sub print_plesk_duplicate_email_users {
 
         my @lowercase_mailusers = map { lc } @mailusers;
         my %seen;
-        grep { !$seen{$_}++ } @lowercase_mailusers;
+        for my $mailuser (@lowercase_mailusers) {
+            $seen{$mailuser}++;
+        }
 
         while ( my ( $k, $v ) = each(%seen) ) {
             if ( $v > 1 ) {
@@ -1878,6 +1928,7 @@ sub print_plesk_duplicate_email_users {
             print " $line\n";
         }
     }
+    return;
 }
 
 sub print_reseller_username_conflicts {
@@ -1903,6 +1954,7 @@ sub print_reseller_username_conflicts {
             }
         }
     }
+    return;
 }
 
 sub parse_output_file {
@@ -1941,7 +1993,7 @@ sub parse_output_file {
     my $skip_networking;
     my $mysql_old_style_passwords;
 
-    open my $file_fh, '<', $file or die "Could not open $file: $!\n";
+    open( my $file_fh, '<', $file ) or die "Could not open $file: $!\n";    ## no critic (BriefOpen) # We DO close this later.
     while (<$file_fh>) {
         chomp;
 
@@ -2148,7 +2200,7 @@ sub parse_output_file {
 
     close $file_fh;
 
-    if ( !$has_src or !$has_dst ) {
+    if ( not $has_src or not $has_dst ) {
         die "$file is missing information about the source and/or destination servers\n";
     }
 
@@ -2187,7 +2239,7 @@ sub parse_output_file {
     print_parsed_mysql_openfileslimit($open_files_limit);
     print_parsed_mysql_skip_networking($skip_networking);
     print_parsed_mysql_old_style_passwords_info( $dst_mysql, $mysql_old_style_passwords );
-
+    return;
 }
 
 sub print_parsed_panel_info {
@@ -2199,6 +2251,7 @@ sub print_parsed_panel_info {
         print "Origen: " . $SRC_PANEL_VERSION . "\n";
         print "Destino: " . $DST_PANEL_VERSION . "\n";
     }
+    return;
 }
 
 sub print_parsed_os_info {
@@ -2215,6 +2268,7 @@ sub print_parsed_os_info {
 };
         }
     }
+    return;
 }
 
 sub print_parsed_eula_info {
@@ -2233,6 +2287,7 @@ completen la configuración inicial que sigue.
             };
         }
     }
+    return;
 }
 
 sub print_parsed_php_info {
@@ -2362,6 +2417,7 @@ Por favor tomen en cuenta que esto resultara en la version no soportada de PHP s
         print 'cPanel: ' . $dst_php . "\n";
         print $addendum;
     }
+    return;
 }
 
 sub print_parsed_mysql_info {
@@ -2412,6 +2468,7 @@ Quieres que procedamos con la migración?
         print "cPanel: $dst_mysql\n";
         print "\n$addendum\n";
     }
+    return;
 }
 
 sub print_parsed_bad_username_info {
@@ -2446,6 +2503,7 @@ USERNAME: DOMAIN
     else {
         print_username_change_info_ES();
     }
+    return;
 }
 
 sub print_parsed_bad_user_config_info {
@@ -2481,6 +2539,7 @@ USUARIO: DESCRIPCION
             print $user . ": " . $problem{$type_lang} . $baduserconfig{$user}{$type} . "\n\n";
         }
     }
+    return;
 }
 
 sub print_parsed_duplicate_users {
@@ -2555,7 +2614,7 @@ DOMINIO: USUARIO
         }
         &$print_dupes($dupe_domains);
     }
-
+    return;
 }
 
 sub print_reseller_username_change_info {
@@ -2577,6 +2636,7 @@ sub print_reseller_username_change_info {
 4. Haga clic en "Change Login Info"
         };
     }
+    return;
 }
 
 sub print_username_change_info {
@@ -2639,6 +2699,7 @@ When renaming the users, please use the following guidelines:
 3. On the line that contains the domain, click the pencil icon to edit
         };
     }
+    return;
 }
 
 sub print_username_change_info_ES {    #ES
@@ -2703,6 +2764,7 @@ Usted puede cambiar los nombres de los usuarios siguiendo las siguiente instrucc
 3. En la línea que contiene el dominio, haga clic en el icono del lápiz para editar
         };
     }
+    return;
 }
 
 sub print_parsed_ipaddr_info {
@@ -2760,6 +2822,7 @@ Si está utilizando cPanel 11.38 o mayor en un sistema operativo con soporte SNI
             };
         }
     }
+    return;
 }
 
 sub print_parsed_forwarding_domain_info {
@@ -2795,6 +2858,7 @@ Usted puede añadirlos en WHM >> Setup/Edit Domain Forwarding (esto requiere só
             print "${domain}: remitido a -> $forwarding_domains{$domain}\n";
         }
     }
+    return;
 }
 
 sub print_parsed_nohosting_domain_info {
@@ -2825,12 +2889,13 @@ Con el fin de hacerlos compatibles con las herramientas de transferencia, por fa
     for my $domain ( sort @nohosting_domains ) {
         print "* $domain\n";
     }
+    return;
 }
 
 sub print_parsed_tomcat_info {
     my ( $src_tomcat, $dst_tomcat, $dst_ea4, $dst_os_ver ) = @_;
 
-    if ( $src_tomcat and !$dst_tomcat ) {
+    if ( $src_tomcat and not $dst_tomcat ) {
         print_header('Tomcat');
         if ( $dst_ea4 || version_compare( $dst_os_ver, qw( >= 7 ) ) ) {
             if ( $OPTS->{'es'} == 0 ) {
@@ -2867,12 +2932,13 @@ Tomcat está instalado en el servidor ${SRC_PANEL_NOVERSION}, pero no en el serv
             }
         }
     }
+    return;
 }
 
 sub print_parsed_coldfusion_info {
     my ( $src_coldfusion, $dst_coldfusion ) = @_;
 
-    if ( $src_coldfusion and !$dst_coldfusion ) {
+    if ( $src_coldfusion and not $dst_coldfusion ) {
         print_header('ColdFusion');
 
         if ( $OPTS->{'es'} == 0 ) {
@@ -2899,6 +2965,7 @@ Si usted necesita ayuda con la instalación de ColdFusion, usted tendría que po
             };
         }
     }
+    return;
 }
 
 sub print_parsed_reseller_username_conflicts {
@@ -2933,6 +3000,7 @@ Como tal, tendrá que ser cambiado a algo único antes de que se pueden copiar l
     }
 
     print_reseller_username_change_info();
+    return;
 }
 
 sub print_parsed_mysql_openfileslimit {
@@ -2963,6 +3031,7 @@ Podemos aumentar el ajuste de open_files_limit para MySQL?
             };
         }
     }
+    return;
 }
 
 sub print_parsed_mysql_skip_networking {
@@ -2991,6 +3060,7 @@ que las bases de datos se puedan restaurar correctamente. Esta opción debe ser 
 [ ] SI  [ ] NO
         };
     }
+    return;
 }
 
 sub print_parsed_mysql_old_style_passwords_info {
@@ -3027,9 +3097,10 @@ las nuevas contraseñas de estilo para cada usuario.
             };
         }
     }
+    return;
 }
 
-sub print_parsed_phpini_items {
+sub print_parsed_phpini_items {    ## no critic (ManyArgs)
     my (
         $src_phpini_memory_limit,        $dst_phpini_memory_limit,
         $src_phpini_post_max_size,       $dst_phpini_post_max_size,
@@ -3130,10 +3201,11 @@ $addendum
             };
         }
     }
+    return;
 }
 
 sub print_htype_fwd {
-    return if ( !$IS_PLESK == 1 and !$IS_PLESK_SMB10 == 1 );
+    return if ( not $IS_PLESK == 1 and not $IS_PLESK_SMB10 == 1 );
 
     my @htype_fwd = `mysql psa -Be 'SELECT domains.name, domains.htype AS hosttype, forwarding.redirect AS target FROM domains, forwarding WHERE domains.id = forwarding.dom_id'`;
     if (@htype_fwd) {
@@ -3153,11 +3225,11 @@ sub print_htype_fwd {
             print "$line\n";
         }
     }
-
+    return;
 }
 
 sub print_htype_none {
-    return if ( !$IS_PLESK == 1 and !$IS_PLESK_SMB10 == 1 );
+    return if ( not $IS_PLESK == 1 and not $IS_PLESK_SMB10 == 1 );
 
     my @htype_none = `mysql psa -Be 'SELECT domains.name, domains.htype AS hosting FROM domains WHERE htype = "none"'`;
     if (@htype_none) {
@@ -3175,6 +3247,7 @@ sub print_htype_none {
             print "$line\n";
         }
     }
+    return;
 }
 
 sub check_for_ssl_certificates {
@@ -3185,14 +3258,15 @@ sub check_for_ssl_certificates {
     my $shared_cert_name;
 
     ## /etc/ssldomains
-    if ( -e '/etc/ssldomains' and !-z '/etc/ssldomains' ) {
-        open my $file_fh, '<', '/etc/ssldomains';
-        while (<$file_fh>) {
-            if (m{ \A ([^:]+):\s \d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3} }xms) {
-                push @ssldomains, $1;
+    if ( -e '/etc/ssldomains' and not -z '/etc/ssldomains' ) {
+        if ( open my $file_fh, '<', '/etc/ssldomains' ) {
+            while (<$file_fh>) {
+                if (m{ \A ([^:]+):\s \d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3} }xms) {
+                    push @ssldomains, $1;
+                }
             }
+            close $file_fh;
         }
-        close $file_fh;
     }
 
     if (@ssldomains) {
@@ -3219,18 +3293,20 @@ sub check_for_ssl_certificates {
     }
 
     ## /var/cpanel/.sharedcrtname
-    if ( -f '/var/cpanel/.sharedcrtname' and !-z '/var/cpanel/.sharedcrtname' ) {
-        open my $file_fh, '<', '/var/cpanel/.sharedcrtname';
-        while (<$file_fh>) {
-            $shared_cert_name = $_;
+    if ( -f '/var/cpanel/.sharedcrtname' and not -z '/var/cpanel/.sharedcrtname' ) {
+        if ( open my $file_fh, '<', '/var/cpanel/.sharedcrtname' ) {
+            while (<$file_fh>) {
+                $shared_cert_name = $_;
+            }
+            close $file_fh;
         }
-        close $file_fh;
     }
 
     if ($shared_cert_name) {
         print "\n[/var/cpanel/.sharedcrtname]\n";
         print "\t$shared_cert_name\n";
     }
+    return;
 }
 
 sub check_for_dns_clustering {
@@ -3269,7 +3345,7 @@ determined by logging into WHM on the cluster server and checking it there):
 
             if ( open my $file_fh, '<', "${cluster_member_ipaddr}.cache" ) {
                 my $cache_ref;
-                eval 'local $SIG{__DIE__}; local $SIG{__WARN__}; $cache_ref = Storable::fd_retrieve($file_fh);';    # from upcp.static
+                eval 'local $SIG{__DIE__}; local $SIG{__WARN__}; $cache_ref = Storable::fd_retrieve($file_fh);';    ## no critic (ReturnValueOfEval, StringyEval) # Intentional to avoid compile error.
                 close $file_fh;
                 if ($cache_ref) {
                     $cluster_member_hostname = $cache_ref->{'host'};
@@ -3307,6 +3383,7 @@ determined by logging into WHM on the cluster server and checking it there):
             print "\t$member\n";
         }
     }
+    return;
 }
 
 sub print_parsed_mysql_username_conflicts {
@@ -3343,6 +3420,7 @@ mysql username conflicts have been found. To fix, please rename the user(s) spec
     else {
         print_username_change_info_ES();
     }
+    return;
 }
 
 sub check_for_missing_scp {
@@ -3350,6 +3428,7 @@ sub check_for_missing_scp {
     if ( !$mysql_output || !$mysql_output =~ /usage:/i ) {
         print "\n!!! WARNING !!!: 'scp' may be missing (an attempt to run 'scp' did not return 'usage:' string), which could cause remote transfers to fail!\n\n";
     }
+    return;
 }
 
 sub submit_stats_info {
@@ -3418,20 +3497,22 @@ sub submit_stats_info {
     }
     $status = $status ? $status : BOLD RED ON_BLACK 'WARNING: Submission did not return any status code!  Blocked by firewall?  Is our server down?!  We want these stats!  Please contact miglead@cpanel.net with this ticket ID and paste the stats info found above into the ticket notes.';
     print $status. "\n";
+    return;
 }
 
 sub get_ticket {
     return $OPTS->{'cpmigticket'} if defined( $OPTS->{'cpmigticket'} );
+    my $ticket_number_regex = qr/\d{7,10}/;
     my $ticket;
-    if ( exists $ENV{HISTFILE} && $ENV{HISTFILE} =~ /ticket.(\d{7,10})$/ ) {
+    if ( exists $ENV{HISTFILE} && $ENV{HISTFILE} =~ / ticket \D (${ticket_number_regex}) \Z /ixms ) {
         $ticket = $1;
         print "Detected ticket number " . $ticket . "\n";
     }
-    if ( !$ticket || $ticket !~ /^\d{7,10}$/ ) {
+    if ( not $ticket or $ticket !~ / \A ${ticket_number_regex} \Z /x ) {
         print "Unable to auto-detect valid migration ticket number, please enter a valid ticket number (7 to 10 digits) or leave blank to skip: ";
-        $ticket = <STDIN>;
+        $ticket = <>;
         chomp $ticket if defined $ticket;
-        if ( defined $ticket && $ticket =~ /^\d{7,10}$/ ) {
+        if ( defined $ticket && $ticket =~ / \A ${ticket_number_regex} \Z /x ) {
             return $ticket;
         }
         else {
@@ -3439,9 +3520,7 @@ sub get_ticket {
             return 0;
         }
     }
-    else {
-        return $ticket;
-    }
+    return $ticket;
 }
 
 sub check_for_hacked_server_touchfile {
@@ -3454,13 +3533,13 @@ sub check_for_hacked_server_touchfile {
     my @touchfiles = grep { /^\.cp\.([^\d]+)\.(\d{4}-\d{2}-\d{2})_([^_]+)_(\d+)$/ } readdir $fh;
     closedir $fh;
 
-    return if scalar @touchfiles == 0;
-    return 1;
+    return 1 if scalar @touchfiles > 0;
+    return;
 }
 
 sub auto_create_keypair {
-    return unless $IS_CPANEL;
     my ( $user, $ticket ) = @_;
+    return unless $IS_CPANEL;
     return if !$user;
     return if !$ticket;
     my $privkey_file = "/root/.ssh/id_" . $user;
@@ -3484,6 +3563,7 @@ sub auto_create_keypair {
             print "Existing cpmig SSH key pair detected at " . $privkey_file . "\n";
         }
     }
+    return;
 }
 
 sub create_cpmig_keypair {
@@ -3532,10 +3612,8 @@ END_OF_COMMAND
             return;
         }
     }
-    else {
-        print "-- Unable to open " . $pubkey_file . "\n";
-        return;
-    }
+    print "-- Unable to open " . $pubkey_file . "\n";
+    return;
 }
 
 sub create_cpmig_user {
@@ -3574,21 +3652,25 @@ sub create_cpmig_user {
         print "-- Attempting to add " . $user . " to wheel group (might fail on some systems).\n";
         system( "usermod", "-G", "wheel", $user );
         print "-- Attempting to set random password for " . $user . ":\n";
-        $password = join( '', map +( 0 .. 9, 'a' .. 'z', 'A' .. 'Z' )[ rand( 10 + 26 * 2 ) ], 1 .. 16 );
-        open( PASSWD, "|-" ) || exec("chpasswd") || die "Failed to execute chpasswd to set password.\n";
-        print PASSWD $user . ':' . $password . "\n";
-        close PASSWD;
+        $password = join( '', map { +( 0 .. 9, 'a' .. 'z', 'A' .. 'Z' )[ rand( 10 + 26 * 2 ) ] } 1 .. 16 );
+        if ( open( my $chpasswd_fh, '|-', 'chpasswd' ) ) {
+            print $chpasswd_fh $user . ':' . $password . "\n";
+            close $chpasswd_fh;
+        }
+        else {
+            die "Failed to execute chpasswd to set password.\n";
+        }
     }
 
-    if ( open PASSWD, "passwd -S ${user} |" ) {
+    if ( open my $passwd_fh, '-|', "passwd -S ${user}" ) {
         my $password_set = 0;
-        while (<PASSWD>) {
+        while (<$passwd_fh>) {
             if ( m{ \A ${user} \s P.? \s }x || m{ \A Password \s set }x ) {
                 $password_set = 1;
                 print "-- Password is set.\n";
             }
         }
-        close PASSWD;
+        close $passwd_fh;
         die "Password check failed, \"passwd -S " . $user . "\" does not report that password is set.\n" unless $password_set;
     }
     else {
@@ -3749,7 +3831,7 @@ sub opts_get {
 
     $opts{'inputfile'} = shift @ARGV unless defined( $opts{'inputfile'} );
 
-    open my $pod_fh, '<', \$pod_data;
+    open my $pod_fh, '<', \$pod_data or die "I'm missing my internal documentation\n";
 
     pod2usage( { -exitval => 1, -verbose => 1, -input => $pod_fh } ) if $opts{'help'};
     pod2usage( { -exitval => 1, -verbose => 2, -input => $pod_fh } ) if $opts{'full-help'};
