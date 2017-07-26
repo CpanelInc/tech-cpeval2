@@ -32,14 +32,14 @@ help:
 	{ lastLine = $$0 }' $(MAKEFILE_LIST)
 	printf "\n"
 
-## Make $(PROJECT) ready for commit
+## Make ready for commit
 all: SHA512SUM
 	
 ## Clean up
 clean:
 	$(RM) $(PROJECT).tdy
 
-## Add new $(PROJECT) version to SHA512SUM file
+## Add new version to SHA512SUM file
 SHA512SUM: tidy
 	if ( egrep -q '$(NEW_VER)$$' SHA512SUM ); then \
 		echo "Version $(NEW_VER) already exists in SHA512SUM!"; \
@@ -61,7 +61,7 @@ test:
 	echo "-- Running perlcritic"
 	$(PERLCRITIC) --profile $(PERLCRITICRC) $(PROJECT)
 
-## Run perltidy on $(PROJECT), compare, and ask for overwrite
+## Run perltidy, compare, and ask for overwrite
 tidy: test $(PROJECT).tdy
 	echo "-- Checking if tidy"
 	if ( diff -u $(PROJECT) $(PROJECT).tdy > /dev/null ); then \
