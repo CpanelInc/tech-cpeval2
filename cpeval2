@@ -1474,11 +1474,11 @@ sub _get_trueuserdomains_hashrefs {
         while (<$tud_fh>) {
             chomp;
             my ( $domain, $user ) = ( split( /\s*:\s*/, $_, 3 ) )[ 0, 1 ];
-            next unless defined $domain;
-            next unless defined $user;
+
+            # Must let undefined values pass through in order for badusers check to work.
 
             # strip site number from Ensim usernames
-            $user =~ s/\^site(\d+)//g;
+            $user =~ s/\^site(\d+)//g if defined $user;
             push @{ $tud_by_user_ref->{$user} },     $domain;
             push @{ $tud_by_domain_ref->{$domain} }, $user;
         }
@@ -2061,14 +2061,14 @@ sub parse_output_file {
         }
 
         ## Bad username checks
-        if (m{ \A $PANEL_REGEX:BADUSER:(.*):\s(.*) \z }xms) {
-            my ( $domain, $user ) = ( $1, $2 );
+        if (m{ \A $PANEL_REGEX:BADUSER:(.*) \z }xms) {
+            my $user = $1;
 
             ## For Ensim
             if ( $user =~ /\^site(\d+)/ ) {
                 $user =~ s/\^site(\d+)//g;
             }
-            $badusers{$user} = $domain;
+            $badusers{$user} = 1;
         }
 
         ## Bad user config checks
@@ -2483,18 +2483,15 @@ sub print_parsed_bad_username_info {
         print qq{
 Usernames were found on the ${SRC_PANEL_NOVERSION} server that are not compatible with cPanel servers. You will need to rename those users before we can copy them. A list of these users is as follows:
 
-
-USERNAME: DOMAIN
 };
     }
     else {    #ES
         print_header('Malos nombres de usuario');
         print "Los nombres de usuario que se encuentran en el servidor de ${SRC_PANEL_NOVERSION} no son compatibles con los servidores de cPanel. Usted tendrá que cambiar el nombre de los usuarios antes de poder copiarlos. La lista de estos usuarios son:\n\n";
-        print "NOMBRE DE USUARIO: DOMINIO\n";
     }
 
     for my $user ( sort keys %badusers ) {
-        print "${user}: $badusers{$user}\n";
+        print "* " . $user . "\n";
     }
 
     if ( $OPTS->{'es'} == 0 ) {
