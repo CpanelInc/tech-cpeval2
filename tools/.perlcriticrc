@@ -34,6 +34,3 @@ severity = 2
 [Subroutines::ProhibitExcessComplexity]
 # Default severity is 3, not ready to enforce, bump it up one level.
 severity = 2
-
-[-ValuesAndExpressions::ProhibitImplicitNewlines]
-# This is intentional to make some formatted output easier to read
