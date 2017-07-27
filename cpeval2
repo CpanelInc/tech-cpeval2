@@ -130,7 +130,7 @@ use POSIX qw( strftime );
 use Term::ANSIColor qw(:constants);
 $Term::ANSIColor::AUTORESET = 1;
 
-my $VERSION = '1.36';
+my $VERSION = '1.37';
 
 my $OPTS = opts_get();
 
