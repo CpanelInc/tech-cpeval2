@@ -263,7 +263,6 @@ if ( $IS_CPANEL == 1 and -f '/var/cpanel/transfers_devel' ) {
 
 # for libkeyutils malware migrations
 if ( $IS_CPANEL == 1 ) {
-    check_for_ssl_certificates();
     check_for_dns_clustering();
 }
 
@@ -3246,65 +3245,6 @@ sub print_htype_none {
         for my $line (@HOSTING_TYPE_NOHOSTING) {
             print "$line\n";
         }
-    }
-    return;
-}
-
-sub check_for_ssl_certificates {
-    print_header("SSL (for libkeyutils migrations. Ignore any output above\nabout SSL certificates if this is the destination server)");
-
-    my @ssldomains;
-    my @dir_contents;
-    my $shared_cert_name;
-
-    ## /etc/ssldomains
-    if ( -e '/etc/ssldomains' and not -z '/etc/ssldomains' ) {
-        if ( open my $file_fh, '<', '/etc/ssldomains' ) {
-            while (<$file_fh>) {
-                if (m{ \A ([^:]+):\s \d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3} }xms) {
-                    push @ssldomains, $1;
-                }
-            }
-            close $file_fh;
-        }
-    }
-
-    if (@ssldomains) {
-        @ssldomains = sort @ssldomains;
-        print "[/etc/ssldomains]\n\n";
-        for my $ssldomain (@ssldomains) {
-            print "\t$ssldomain\n";
-        }
-    }
-
-    ## /var/cpanel/userdata/nobody/
-    if ( -d '/var/cpanel/userdata/nobody' ) {
-        opendir( my $dir_fh, '/var/cpanel/userdata/nobody' );
-        @dir_contents = grep { /SSL$/ } readdir $dir_fh;
-        closedir $dir_fh;
-    }
-
-    if (@dir_contents) {
-        @dir_contents = sort @dir_contents;
-        print "\n[/var/cpanel/userdata/nobody]\n\n";
-        for my $file (@dir_contents) {
-            print "\t$file\n";
-        }
-    }
-
-    ## /var/cpanel/.sharedcrtname
-    if ( -f '/var/cpanel/.sharedcrtname' and not -z '/var/cpanel/.sharedcrtname' ) {
-        if ( open my $file_fh, '<', '/var/cpanel/.sharedcrtname' ) {
-            while (<$file_fh>) {
-                $shared_cert_name = $_;
-            }
-            close $file_fh;
-        }
-    }
-
-    if ($shared_cert_name) {
-        print "\n[/var/cpanel/.sharedcrtname]\n";
-        print "\t$shared_cert_name\n";
     }
     return;
 }
