@@ -3122,7 +3122,7 @@ sub print_parsed_dns_clustering_info {
         print_header('DNS CLUSTERING');
         print "NOTE: THIS SECTION ONLY APPLIES IF THE SOURCE SERVER IS COMPROMISED\n\n";
         print "If the source server has been root compromised, any DNS Cluster access keys or API tokens may also be compromised and should be changed.\n\n";
-        print "The following cluster members were found to be configured on this server:\n\n";
+        print "The following cluster members were found to be configured on the source server:\n\n";
         print "HOSTNAME - IP\n";
         print "-------------\n";
     }
@@ -3130,7 +3130,7 @@ sub print_parsed_dns_clustering_info {
         print_header('DNS CLUSTERING');
         print "NOTE: THIS SECTION ONLY APPLIES IF THE SOURCE SERVER IS COMPROMISED\n\n";
         print "If the source server has been root compromised, any DNS Cluster access keys or API tokens may also be compromised and should be changed.\n\n";
-        print "The following cluster members were found to be configured on this server:\n\n";
+        print "The following cluster members were found to be configured on the source server:\n\n";
         print "HOSTNAME - IP\n";
         print "-------------\n";
     }
