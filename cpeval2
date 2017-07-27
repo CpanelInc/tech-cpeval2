@@ -136,7 +136,7 @@ create_cpmig_user() if $OPTS->{'createuser'};
 
 my $DEBUG = 0;
 
-my $PANEL_REGEX = 's:(?:Plesk[0-9]+(?:SMB)?|Ensim|DirectAdmin)';
+my $PANEL_REGEX = 's:(?:cPanel|Plesk[0-9]+(?:SMB)?|Ensim|DirectAdmin)';
 
 my $PREFIX;    # d: or s:Plesk9 or s:DirectAdmin, etc.
 my $APACHE_BIN;
@@ -148,8 +148,8 @@ my $IS_PLESK_SMB10 = 0;
 my $IS_ENSIM       = 0;
 my $IS_DA          = 0;
 
-my $SRC_PANEL;              # Ensim, DirectAdmin, Plesk8, Plesk10SMB, etc.
-my $SRC_PANEL_NOVERSION;    # Ensim, DirectAdmin, Plesk
+my $SRC_PANEL;              # cPanel, Ensim, DirectAdmin, Plesk8, Plesk10SMB, etc.
+my $SRC_PANEL_NOVERSION;    # cPanel, Ensim, DirectAdmin, Plesk
 my $SRC_PANEL_VERSION;      # e.g. "Plesk 12.0.18"
 
 my $DST_PANEL_VERSION;      # e.g. "cPanel 11.44.0.18"
@@ -354,7 +354,7 @@ sub mysql_test {
 
 sub print_header {
     my $text = shift;
-    print "\n" . '=' x 50 . "\n$text\n" . '=' x 50 . "\n";
+    print "\n" . '=' x 50 . "\n$text\n" . '=' x 50 . "\n\n";
     return;
 }
 
@@ -363,7 +363,7 @@ sub get_control_panel_and_set_prefix {    ## no critic (ExcessComplexity)
 
     # CPANEL
     if ( -f '/usr/local/cpanel/cpanel' ) {    ## no critic (CascadingIfElse)
-        $PREFIX    = 'd:';
+        $PREFIX = $OPTS->{'cpanelsource'} ? 's:cPanel:' : 'd:';
         $IS_CPANEL = 1;
     }
 
@@ -639,8 +639,13 @@ sub print_control_panel_info {
         }
 
         if ($panel_version) {
-            $DST_PANEL_VERSION = "cPanel " . $panel_version;
-            $CPANEL_VERSION    = $panel_version;
+            if ( $OPTS->{'cpanelsource'} ) {
+                $SRC_PANEL_VERSION = "cPanel " . $panel_version;
+            }
+            else {
+                $DST_PANEL_VERSION = "cPanel " . $panel_version;
+                $CPANEL_VERSION    = $panel_version;
+            }
         }
         else {
             $DST_PANEL_VERSION = "cPanel (version unknown)";
@@ -2012,12 +2017,16 @@ sub parse_output_file {
             $SRC_PANEL = $1;
         }
 
+        $SRC_PANEL_NOVERSION = $SRC_PANEL;
+
+        if ( $SRC_PANEL and $SRC_PANEL =~ /^cPanel/ ) {
+            $SRC_PANEL .= ' source';
+            $SRC_PANEL_NOVERSION = 'cPanel source';
+        }
+
         ## so we can print just 'Plesk' to the customer, and not, say, 'Plesk10SMB'
         if ( $SRC_PANEL and $SRC_PANEL =~ /^Plesk/ ) {
             $SRC_PANEL_NOVERSION = 'Plesk';
-        }
-        else {
-            $SRC_PANEL_NOVERSION = $SRC_PANEL;
         }
 
         ## Panel version info
@@ -2209,11 +2218,11 @@ sub parse_output_file {
     my $src_disk_usage_ref = \@src_disk_usage;
     my $dst_disk_usage_ref = \@dst_disk_usage;
 
-    if ( $OPTS->{'es'} == 1 ) {
-        print "Hola,\n\nLa evaluación inicial ha completado. Nuestros resultados son los siguientes:\n\n";
-    }
-    else {
+    unless ( $OPTS->{'es'} ) {
         print "Hi,\n\nThe pre migration server evaluation is complete. Our findings are as follows:\n\n";
+    }
+    else {    #ES
+        print "Hola,\n\nLa evaluación inicial ha completado. Nuestros resultados son los siguientes:\n\n";
     }
 
     print_parsed_panel_info();
@@ -2245,7 +2254,7 @@ sub parse_output_file {
 }
 
 sub print_parsed_panel_info {
-    if ( $OPTS->{'es'} == 0 ) {
+    unless ( $OPTS->{'es'} ) {
         print "Source: " . $SRC_PANEL_VERSION . "\n";
         print "Destination: " . $DST_PANEL_VERSION . "\n";
     }
@@ -2259,15 +2268,13 @@ sub print_parsed_panel_info {
 sub print_parsed_os_info {
     my ($dst_os_ver) = @_;
     if ( defined($dst_os_ver) && version_compare( $dst_os_ver, qw( < 6 ) ) ) {
-        if ( $OPTS->{'es'} == 0 ) {
+        unless ( $OPTS->{'es'} ) {
             print_header('Operating System Version');
-            print q{The operating system version on the destination server is not at least major version 6.  Due to various limitations in older operating systems such as the lack of SNI and TLS 1.1/1.2 support we highly recommend that CentOS/RedHat/CloudLinux 6 or 7 is used.
-};
+            print "The operating system version on the destination server is not at least major version 6.  Due to various limitations in older operating systems such as the lack of SNI and TLS 1.1/1.2 support we highly recommend that CentOS/RedHat/CloudLinux 6 or 7 is used.\n";
         }
         else {    #ES
             print_header('Versión del sistema operativo');
-            print q{La versión del sistema operativo en el servidor de destino no es la version minima de 6. Este sistema operativo tiene varias limitaciones tal como la falta de soporte de SNI y TLS 1.1/1.2 debido a esto recomendamos que utilicen CentOS/RedHat/CloudLinux 6 o 7.
-};
+            print "La versión del sistema operativo en el servidor de destino no es la version minima de 6. Este sistema operativo tiene varias limitaciones tal como la falta de soporte de SNI y TLS 1.1/1.2 debido a esto recomendamos que utilicen CentOS/RedHat/CloudLinux 6 o 7.\n";
         }
     }
     return;
@@ -2275,18 +2282,13 @@ sub print_parsed_os_info {
 
 sub print_parsed_eula_info {
     if ( $EULA_ACCEPTED == 0 ) {
-        if ( $OPTS->{'es'} == 0 ) {
+        unless ( $OPTS->{'es'} ) {
             print_header('cPanel End User License Agreement');
-            print q{The license agreement has not yet been accepted. Before we can proceed, you must log into WHM as root and accept the license agreement, then complete the initial setup that follows.
-};
+            print "The license agreement has not yet been accepted. Before we can proceed, you must log into WHM as root and accept the license agreement, then complete the initial setup that follows.\n";
         }
         else {    #ES
             print_header('cPanel Licencia');
-            print q{
-La licencia de cPanel no ha sido aceptada. Antes de que podamos continuar,
-por favor acceda a WHM como root y acepte la licencia, inmediatamente despues
-completen la configuración inicial que sigue.
-            };
+            print "La licencia de cPanel no ha sido aceptada. Antes de que podamos continuar, por favor acceda a WHM como root y acepte la licencia, inmediatamente despues completen la configuración inicial que sigue.\n";
         }
     }
     return;
@@ -2314,7 +2316,7 @@ sub print_parsed_php_info {
                 }
             },
             supported    => '5.4, 5.5, 5.6, 7.0, and 7.1',
-            supported_es => '5.4, 5.5, 5.6, 7.0, y 7.1'
+            supported_es => '5.4, 5.5, 5.6, 7.0, y 7.1'      #ES
         );
     }
     else {
@@ -2330,7 +2332,7 @@ sub print_parsed_php_info {
                 }
             },
             supported    => '5.3, 5.4, 5.5, and 5.6 (using EasyApache 3, PHP 7.0 and 7.1 are available in EasyApache 4)',
-            supported_es => '5.3, 5.4, 5.5, y 5.6 (utilizando EasyApache 3. PHP 7.0 and 7.1 son disponibles en EasyApache 4)'
+            supported_es => '5.3, 5.4, 5.5, y 5.6 (utilizando EasyApache 3. PHP 7.0 and 7.1 son disponibles en EasyApache 4)'    #ES
         );
     }
 
@@ -2353,63 +2355,39 @@ sub print_parsed_php_info {
     ## If source isn't using supported PHP
     if ( !exists( $phpver{major}->{$src_php_major}->{minor}->{$src_php_minor} ) ) {
         $print_message = 1;
-        if ( $OPTS->{'es'} == 0 ) {
-            $addendum .= qq{
-The ${SRC_PANEL_NOVERSION} server appears to be running an unsupported version of PHP[1].  cPanel currently supports PHP $phpver{supported}.  Unfortunately, there may be issues with your sites displaying correctly on a supported PHP version.
-
-We can definitely move forward with the migration. However, we would be unable to determine if any of your PHP driven websites may be incompatible with the supported versions of PHP. We highly recommend that any PHP based websites are updated (if necessary) to be compatible with a supported version of PHP.
-
-Additionally, after the migration, we may not be able to provide assistance for issues related to websites which require an unsupported version of PHP.
-
-[1] http://php.net/eol.php
-
-            };
+        $addendum .= "\n";
+        unless ( $OPTS->{'es'} ) {
+            $addendum .= "The ${SRC_PANEL_NOVERSION} server appears to be running an unsupported version of PHP[1].  cPanel currently supports PHP $phpver{supported}.  Unfortunately, there may be issues with your sites displaying correctly on a supported PHP version.\n\n";
+            $addendum .= "We can definitely move forward with the migration. However, we would be unable to determine if any of your PHP driven websites may be incompatible with the supported versions of PHP. We highly recommend that any PHP based websites are updated (if necessary) to be compatible with a supported version of PHP.\n\n";
+            $addendum .= "Additionally, after the migration, we may not be able to provide assistance for issues related to websites which require an unsupported version of PHP.\n\n";
         }
         else {    #ES
-            $addendum .= qq{
-El servidor ${SRC_PANEL_NOVERSION} parece estar corriendo una version de PHP[1] que no es soportado. cPanel actualmente soporta PHP $phpver{supported_es}. Desafortunadamente, pueden haber problemas con sus sitios siendo procesados correctamente al usar una version soportada de PHP.
-
-Definitivamente podemos proceder con esta migracion. Sin embargo, no podremos determinar si alguno de su sitios utilizando PHP son incompatibles con la version soportadas de PHP. Recomendamos que cualquier sitio que use PHP sea actualizado(si es necesario) a una version soportada de PHP.
-
-Adicionalmente, no podremos proveer asistencia a problemas relacionados con sus sitios que requieran una version no soportada de PHP.
-
-[1] http://php.net/eol.php
-
-            };
+            $addendum .= "El servidor ${SRC_PANEL_NOVERSION} parece estar corriendo una version de PHP[1] que no es soportado. cPanel actualmente soporta PHP $phpver{supported_es}. Desafortunadamente, pueden haber problemas con sus sitios siendo procesados correctamente al usar una version soportada de PHP.\n\n";
+            $addendum .= "Definitivamente podemos proceder con esta migracion. Sin embargo, no podremos determinar si alguno de su sitios utilizando PHP son incompatibles con la version soportadas de PHP. Recomendamos que cualquier sitio que use PHP sea actualizado(si es necesario) a una version soportada de PHP.\n\n";
+            $addendum .= "Adicionalmente, no podremos proveer asistencia a problemas relacionados con sus sitios que requieran una version no soportada de PHP.\n\n";
         }
+        $addendum .= "[1] http://php.net/eol.php\n\n";
     }
 
     ## if dest cPanel isn't using supported PHP for some reason
     if ( !exists( $phpver{major}->{$dst_php_major}->{minor}->{$dst_php_minor} ) ) {
         $print_message = 1;
-        if ( $OPTS->{'es'} == 0 ) {
-            $addendum .= qq{
-The cPanel server appears to be running an unsupported version of PHP.  Only PHP $phpver{supported} are supported at this time. If you have elected to have us reconfigure PHP to add support for certain PHP modules, we will be unable to do so unless we can install a supported version of PHP.
-
-Would you like us to install one of the supported PHP versions on the cPanel server? If yes, which version? If no version is specified, we will use the latest available.
-
-Please note that this will most likely result in the unsupported version of PHP being removed and it may not be possible to reverse the change.
-
-[ ] YES   [ ] NO
-
-            };
+        unless ( $OPTS->{'es'} ) {
+            $addendum .= "The cPanel destination server appears to be running an unsupported version of PHP.  Only PHP $phpver{supported} are supported at this time. If you have elected to have us reconfigure PHP to add support for certain PHP modules, we will be unable to do so unless we can install a supported version of PHP.\n\n";
+            $addendum .= "Would you like us to install one of the supported PHP versions on the destination cPanel server? If yes, which version? If no version is specified, we will use the latest available.\n\n";
+            $addendum .= "Please note that this will most likely result in the unsupported version of PHP being removed and it may not be possible to reverse the change.\n\n";
+            $addendum .= "[ ] YES   [ ] NO\n\n";
         }
         else {    #ES
-            $addendum .= qq{
-El servidor de cPanel parece estar usando una version no soportada de PHP. Solamente PHP $phpver{supported_es} es soportado en estos momentos. Si desean que nosotros reconfiguremos PHP para agregar soporte a ciertos módulos, no lo podremos hacer a menos que instalemos una version soportada de PHP.
-
-¿Desean que nosotros instalemos una version soportada de PHP en el servidor de cPanel? ¿Si la respuesta es si, que version? Si no nos proveen con una version especifica usaremos la ultima version disponible.
-
-Por favor tomen en cuenta que esto resultara en la version no soportada de PHP siendo removido del servidor y muy probablemente no podremos revertir este cambio.
-
-[ ] SI   [ ] NO
-
-            };
+            $addendum .= "El servidor de Destino de cPanel aparece estar corriendo una versión de PHP que ya no es soportado. Solamente PHP $phpver{supported_es} es soportado en este momento. Si usted ha elegido que nosotros re-configuremos PHP para agregar soporte de ciertos módulos de PHP no podremos hacerlo a menos que podamos instalar una versión soportada de PHP.\n\n";
+            $addendum .= "¿Quiere que instalemos una de las versiones de PHP soportados en el servidor de Destino de cPanel? Si, la respuesta es si. ¿Que versión? Si ninguna versión es especificada usaremos la ultima versión disponible.\n\n";
+            $addendum .= "Por favor tomen en cuenta que esto resultara en la version no soportada de PHP siendo removido del servidor y muy probablemente no podremos revertir este cambio.\n\n";
+            $addendum .= "[ ] SI   [ ] NO\n\n";
         }
     }
 
     if ( $print_message == 1 ) {
-        if ( $OPTS->{'es'} == 0 ) {
+        unless ( $OPTS->{'es'} ) {
             print_header('PHP Versions');
         }
         else {    #ES
@@ -2417,7 +2395,7 @@ Por favor tomen en cuenta que esto resultara en la version no soportada de PHP s
         }
         print $SRC_PANEL_NOVERSION . ': ' . $src_php . "\n";
         print 'cPanel: ' . $dst_php . "\n";
-        print $addendum;
+        print "\n" . $addendum . "\n";
     }
     return;
 }
@@ -2432,43 +2410,32 @@ sub print_parsed_mysql_info {
         $src_mysql =~ s/:UNSUPPORTED//g;
 
         $print_message = 1;
-        if ( $OPTS->{'es'} == 0 ) {
-            $addendum = qq{
-The ${SRC_PANEL_NOVERSION} server is running MySQL ${src_mysql}. This version is not supported at this time. We can attempt the migration anyway, but you may need to create the databases on the cPanel server, then manually export and import your databases.
-
-
-Would you like us to proceed with the migration anyway?
-
-
-[ ] YES  [ ] NO
-            };
+        unless ( $OPTS->{'es'} ) {
+            $addendum .= "The ${SRC_PANEL_NOVERSION} server is running MySQL ${src_mysql}. This version is not supported at this time. We can attempt the migration anyway, but you may need to create the databases on the cPanel destination server, then manually export and import your databases.\n\n";
+            $addendum .= "Would you like us to proceed with the migration anyway?\n\n";
+            $addendum .= "[ ] YES  [ ] NO\n\n";
+        }
+        else {    # ES
+            $addendum .= "El servidor ${SRC_PANEL_NOVERSION} está utiliza MySQL ${src_mysql}. Esta versión no es soportado en estos momentos. Podemos intentar continuar con la migración, pero usted tendra que crear las bases de datos en el servidor de cPanel, despues manualmente exportar e importar sus bases de datos.\n\n";
+            $addendum .= "Quieres que procedamos con la migración?\n\n";
+            $addendum .= "[ ] SI   [ ] NO\n\n";
         }
 
         if ( $dst_mysql =~ /^4/ ) {
-            $addendum .= qq{
-The cPanel server is running MySQL 4, which is not supported at this time. Our recommendation would be to upgrade MySQL via WHM >> MySQL Upgrade before we proceed further.
-
-            };
+            $addendum .= "The cPanel destination server is running MySQL 4, which is not supported at this time. Our recommendation would be to upgrade MySQL via WHM >> MySQL Upgrade before we proceed further.\n\n";
         }
     }
 
     if ( $print_message == 1 ) {
-        if ( $OPTS->{'es'} == 0 ) {
+        unless ( $OPTS->{'es'} ) {
             print_header('MySQL Versions');
         }
         else {    #ES
             print_header('Versiones MySQL');
-            $addendum = qq{
-El servidor ${SRC_PANEL_NOVERSION} está utiliza MySQL ${src_mysql}. Esta versión no es soportado en estos momentos. Podemos intentar continuar con la migración, pero usted tendra que crear las bases de datos en el servidor de cPanel, despues manualmente exportar e importar sus bases de datos.
-
-Quieres que procedamos con la migración?
-
-[ ] SI   [ ] NO
-            };
         }
         print $SRC_PANEL_NOVERSION . ': ' . $src_mysql . "\n";
         print "cPanel: $dst_mysql\n";
-        print "\n$addendum\n";
+        print "\n" . $addendum . "\n";
     }
     return;
 }
@@ -2480,23 +2447,20 @@ sub print_parsed_bad_username_info {
 
     # get panel version. print how to change username based on panel version
 
-    if ( $OPTS->{'es'} == 0 ) {
+    unless ( $OPTS->{'es'} ) {
         print_header('Incompatible Usernames');
-        print qq{
-Usernames were found on the ${SRC_PANEL_NOVERSION} server that are not compatible with cPanel servers. You will need to rename those users before we can copy them. A list of these users is as follows:
-
-};
+        print "Usernames were found on the ${SRC_PANEL_NOVERSION} server that are not compatible with the cPanel destination server. You will need to rename those users before we can copy them. A list of these users is as follows:\n\n";
     }
     else {    #ES
         print_header('Malos nombres de usuario');
-        print "Los nombres de usuario que se encuentran en el servidor de ${SRC_PANEL_NOVERSION} no son compatibles con los servidores de cPanel. Usted tendrá que cambiar el nombre de los usuarios antes de poder copiarlos. La lista de estos usuarios son:\n\n";
+        print "Los nombres de los usuarios que se encuentran en el servidor de ${SRC_PANEL_NOVERSION} no son compatibles con el servidor de Destino de cPanel. Usted tendrá que cambiar el nombre de los usuarios antes de que podamos copiarlos. La lista de estos usuarios son:\n\n";
     }
 
     for my $user ( sort keys %badusers ) {
         print "* " . $user . "\n";
     }
 
-    if ( $OPTS->{'es'} == 0 ) {
+    unless ( $OPTS->{'es'} ) {
         print_username_change_info();
     }
     else {
@@ -2508,29 +2472,21 @@ Usernames were found on the ${SRC_PANEL_NOVERSION} server that are not compatibl
 sub print_parsed_bad_user_config_info {
     my %baduserconfig = @_;
     return if !%baduserconfig;
-    if ( $OPTS->{'es'} == 0 ) {
+    unless ( $OPTS->{'es'} ) {
         print_header('User configuration issues');
-        print qq{
-Some user configuration problems were found on the ${SRC_PANEL_NOVERSION} server that may cause failues during the transfer process.  You will need to correct these configuration issues before we can copy these users.  A list of these users and configuration problems is as follows:
-
-USERNAME: PROBLEM DESCRIPTION
-
-};
+        print "Some user configuration problems were found on the ${SRC_PANEL_NOVERSION} server that may cause failues during the transfer process.  You will need to correct these configuration issues before we can copy these users.  A list of these users and configuration problems is as follows:\n\n";
+        print "USERNAME: PROBLEM DESCRIPTION\n";
     }
     else {    #ES
         print_header('Problemas de configuracion de usuarios');
-        print qq{
-Hemos encontrado algunos problemas de configuración en el servidor de ${SRC_PANEL_NOVERSION} que pueden causar problemas durante el proceso de transferencia. Ustedes necesitaran corregir estos problemas de configuración antes de que podamos copiar estos usuarios. La lista de usuarios y los problemas de configuración son los siguientes:
-
-USUARIO: DESCRIPCION
-
-};
+        print "Hemos encontrado algunos problemas de configuración en el servidor de ${SRC_PANEL_NOVERSION} que pueden causar problemas durante el proceso de transferencia. Ustedes necesitaran corregir estos problemas de configuración antes de que podamos copiar estos usuarios. La lista de usuarios y los problemas de configuración son los siguientes:\n\n";
+        print "USUARIO: DESCRIPCION\n";
     }
     my %problem = (
         'QUOTA_EN'     => 'The user\'s "Total Disk Space(MB)" value must be numeric, with no suffix added such as "MB" or "GB". The current value is: ',
-        'QUOTA_ES'     => 'El valor del usuario "Total Disk Space(MB)" debe ser numerico sin ningún sufijo agregado como "MB" o "GB". El valor actual es: ',
+        'QUOTA_ES'     => 'El valor del usuario "Total Disk Space(MB)" debe ser numerico sin ningún sufijo agregado como "MB" o "GB". El valor actual es: ',    #ES
         'BANDWIDTH_EN' => 'The user\'s "Bandwidth (MB)" value must be numeric, with no suffix added such as "MB" or "GB". The current value is: ',
-        'BANDWIDTH_ES' => 'El valor del usuario "Bandwidth (MB)" debe ser numerico sin ningún sufijo agregado como "MB" o "GB". El valor actual es: ',
+        'BANDWIDTH_ES' => 'El valor del usuario "Bandwidth (MB)" debe ser numerico sin ningún sufijo agregado como "MB" o "GB". El valor actual es: ',          #ES
     );
     for my $user ( sort keys %baduserconfig ) {
         for my $type ( sort keys %{ $baduserconfig{$user} } ) {
@@ -2555,61 +2511,43 @@ sub print_parsed_duplicate_users {
     };
 
     if ( scalar keys %{$dupe_users} ) {
-        if ( $OPTS->{'es'} == 0 ) {
+        unless ( $OPTS->{'es'} ) {
             print_header('Duplicate usernames');
-            print qq{
-Some duplicated user names were found on the ${SRC_PANEL_NOVERSION} server.  Please rename these users so that they will not cause a conflict during transfer:
-
-USERNAME: DOMAIN
-};
+            print "Some duplicated user names were found on the ${SRC_PANEL_NOVERSION} server.  Please rename these users so that they will not cause a conflict during transfer:\n\n";
+            print "USERNAME: DOMAIN\n";
         }
         else {    #ES
             print_header('Nombres de usuarios duplicados');
-            print qq{
-Se han encontrado nombres de usuarios duplicados en el servidor ${SRC_PANEL_NOVERSION}. Por favor cambie el nombre de estos usuarios para que no haya un conflicto durante la transferencia:
-
-USUARIO: DOMINIO
-};
+            print "Se han encontrado nombres de usuarios duplicados en el servidor ${SRC_PANEL_NOVERSION}. Por favor cambie el nombre de estos usuarios para que no haya un conflicto durante la transferencia:\n\n";
+            print "USUARIO: DOMINIO\n";
         }
         &$print_dupes($dupe_users);
     }
 
     if ( scalar keys %{$dupe_first8} ) {
-        if ( $OPTS->{'es'} == 0 ) {
+        unless ( $OPTS->{'es'} ) {
             print_header('First 8 characters of username are not unique');
-            print qq{
-Database prefixing in WHM/cPanel requires the first 8 characters of each username to be unique, please rename the following users on the ${SRC_PANEL_NOVERSION} server to prevent a conflict during transfer:
-
-FIRST_8: FULL_USERNAME (DOMAIN)
-};
+            print "Database prefixing in WHM/cPanel requires the first 8 characters of each username to be unique, please rename the following users on the ${SRC_PANEL_NOVERSION} server to prevent a conflict during transfer:\n\n";
+            print "FIRST_8: FULL_USERNAME (DOMAIN)\n";
         }
         else {    #ES
             print_header('Los primeros 8 caracteres del nombre de usuario no son únicos');
-            print qq{
-Prefijo de base de datos en WHM/cPanel requiere que los primeros 8 caracteres de cada nombre de usuario sea único, por favor, cambie el nombre de los siguientes usuarios en el servidor de ${SRC_PANEL_NOVERSION} para evitar un conflicto durante la transferencia:
-
-PRIMEROS_8: USUARIO_COMPLETO (DOMINIO)
-};
+            print "Prefijo de base de datos en WHM/cPanel requiere que los primeros 8 caracteres de cada nombre de usuario sea único, por favor, cambie el nombre de los siguientes usuarios en el servidor de ${SRC_PANEL_NOVERSION} para evitar un conflicto durante la transferencia:\n\n";
+            print "PRIMEROS_8: USUARIO_COMPLETO (DOMINIO)\n";
         }
         &$print_dupes($dupe_first8);
     }
 
     if ( scalar keys %{$dupe_domains} ) {
-        if ( $OPTS->{'es'} == 0 ) {
+        unless ( $OPTS->{'es'} ) {
             print_header('Same domain owned by multiple users');
-            print qq{
-The same domain was found to be owned by multiple users which will result in a domain conflict during transfer.  Please ensure that each domain is only associated with one user on the ${SRC_PANEL_NOVERSION} server:
-
-DOMAIN: USERNAME
-};
+            print "The same domain was found to be owned by multiple users which will result in a domain conflict during transfer.  Please ensure that each domain is only associated with one user on the ${SRC_PANEL_NOVERSION} server:\n\n";
+            print "DOMAIN: USERNAME\n";
         }
         else {    #ES
             print_header('Multiples usuarios son dueños del mismo dominio');
-            print qq{
-El mismo dominio fue encontrado ser poseído por varios usuarios lo cual causara un conflicto de dominio durante la transferencia. Asegúrese de que cada dominio solamente está asociado a un usuario dentro del servidor de ${SRC_PANEL_NOVERSION}:
-
-DOMINIO: USUARIO
-};
+            print "El mismo dominio fue encontrado ser poseído por varios usuarios lo cual causara un conflicto de dominio durante la transferencia. Asegúrese de que cada dominio solamente está asociado a un usuario dentro del servidor de ${SRC_PANEL_NOVERSION}:\n\n";
+            print "DOMINIO: USUARIO\n";
         }
         &$print_dupes($dupe_domains);
     }
@@ -2617,151 +2555,117 @@ DOMINIO: USUARIO
 }
 
 sub print_reseller_username_change_info {
+    print "\n";
 
     # This has only been tested on Plesk 10, 11, and 11.5.
-    if ( $OPTS->{'es'} == 0 ) {
-        print q{
-1. Log into Plesk as admin
-2. Click "Resellers"
-3. Click the link under the "Reseller Name" column
-4. Click "Change Login Info"
-        };
+    unless ( $OPTS->{'es'} ) {
+        print "1. Log into Plesk as admin\n";
+        print "2. Click 'Resellers'\n";
+        print "3. Click the link under the 'Reseller Name' column\n";
+        print "4. Click 'Change Login Info'\n";
     }
     else {    #ES
-        print q{
-1. Inicie sesión en Plesk como "admin"
-2. Haga clic en "Resellers"
-3. Haga clic en el enlace debajo de la columna "Reseller Name"
-4. Haga clic en "Change Login Info"
-        };
+        print "1. Inicie sesión en Plesk como 'admin'\n";
+        print "2. Haga clic en 'Resellers'\n";
+        print "3. Haga clic en el enlace debajo de la columna 'Reseller Name'\n";
+        print "4. Haga clic en 'Change Login Info'\n";
     }
     return;
 }
 
 sub print_username_change_info {
-    print q{
-When renaming the users, please use the following guidelines:
-
-* Use only letters (lowercase only), and numbers if desired
-* Users cannot start with a number, or with the string "test"
-    };
+    print "\n";
+    print "When renaming the users, please use the following guidelines:\n\n";
+    print "* Use only letters (lowercase only), and numbers if desired\n";
+    print "* Users cannot start with a number, or with the string 'test'\n";
 
     if ( $SRC_PANEL_NOVERSION =~ /Plesk/ ) {
-        print "\n\nYou can change usernames using these steps:\n";
+        print "\nYou can change usernames using these steps:\n\n";
 
         if ( $SRC_PANEL eq 'Plesk8' ) {
-            print q{
-1. Log into Plesk as "admin"
-2. Click "Domains"
-3. Click on the domain
-4. Click on "Setup"
-            };
+            print "1. Log into Plesk as 'admin'\n";
+            print "2. Click 'Domains'\n";
+            print "3. Click on the domain\n";
+            print "4. Click on 'Setup'\n";
         }
         elsif ( $SRC_PANEL eq 'Plesk9' ) {
-            print q{
-1. Log into Plesk as "admin"
-2. Click "Domains"
-3. Click on the domain
-4. Click on "Web Hosting Settings"
-            };
+            print "1. Log into Plesk as 'admin'\n";
+            print "2. Click 'Domains'\n";
+            print "3. Click on the domain\n";
+            print "4. Click on 'Web Hosting Settings'\n";
         }
         elsif ( $SRC_PANEL eq 'Plesk10' ) {
-            print q{
-1. Log into Plesk as "admin"
-2. Click "Domains"
-3. Click on the domain
-4. Click on "Change Hosting Settings"
-            };
+            print "1. Log into Plesk as 'admin'\n";
+            print "2. Click 'Domains'\n";
+            print "3. Click on the domain\n";
+            print "4. Click on 'Change Hosting Settings'\n";
         }
         elsif ( $SRC_PANEL eq 'Plesk10SMB' ) {
-            print q{
-1. Log into Plesk as "admin"
-2. Click "Websites & Domains"
-3. Click "Website Settings"
-4. Change the value in the box labeled "FTP username"
-            };
+            print "1. Log into Plesk as 'admin'\n";
+            print "2. Click 'Websites & Domains'\n";
+            print "3. Click 'Website Settings'\n";
+            print "4. Change the value in the box labeled 'FTP username'\n";
         }
         else {    # Plesk 11+
-            print q{
-1. Log into Plesk as "admin"
-2. Click "Domains"
-3. Click on the domain
-4. Click the "General" tab
-5. Click "Change Hosting Settings"
-            };
+            print "1. Log into Plesk as 'admin'\n";
+            print "2. Click 'Domains'\n";
+            print "3. Click on the domain\n";
+            print "4. Click the 'General' tab\n";
+            print "5. Click 'Change Hosting Settings'\n";
         }
     }
     elsif ( $SRC_PANEL =~ /Ensim/ ) {
-        print q{
-1. Log into Ensim as "admin"
-2. Click "Site Manager"
-3. On the line that contains the domain, click the pencil icon to edit
-        };
+        print "1. Log into Ensim as 'admin'\n";
+        print "2. Click 'Site Manager'\n";
+        print "3. On the line that contains the domain, click the pencil icon to edit\n";
     }
     return;
 }
 
 sub print_username_change_info_ES {    #ES
-    print q{
-Cuando cambie el nombre de los usuarios, por favor siga las siguientes directivas:
-
-* Utilice solamente letras (solamente minúsculas), y números
-* Nombres de usuario no pueden comenzar con un número o con el string "test"
-    };
+    print "\n";
+    print "Cuando cambie el nombre de los usuarios, por favor siga las siguientes directivas:\n\n";
+    print "* Utilice solamente letras (solamente minúsculas), y números\n";
+    print "* Nombres de usuario no pueden comenzar con un número o con el string 'test'\n\n";
 
     if ( $SRC_PANEL_NOVERSION =~ /Plesk/ ) {
-        print q{
-Usted puede cambiar los nombres de los usuarios siguiendo las siguiente instrucciones:
-};
-
+        print "Usted puede cambiar los nombres de los usuarios siguiendo las siguiente instrucciones:\n\n";
         if ( $SRC_PANEL eq 'Plesk8' ) {
-            print q{
-1. Inicie sesión en Plesk como "admin"
-2. Haga clic en "Domains"
-3. Haga clic en el dominio
-4. Haga clic en "Setup"
-            };
+            print "1. Inicie sesión en Plesk como 'admin'\n";
+            print "2. Haga clic en 'Domains'\n";
+            print "3. Haga clic en el dominio\n";
+            print "4. Haga clic en 'Setup'\n";
         }
         elsif ( $SRC_PANEL eq 'Plesk9' ) {
-            print q{
-1. Inicie sesión en Plesk como "admin"
-2. Haga clic en "Domains"
-3. Haga clic en el dominio
-4. Haga clic en "Web Hosting Settings"
-            };
+            print "1. Inicie sesión en Plesk como 'admin'\n";
+            print "2. Haga clic en 'Domains'\n";
+            print "3. Haga clic en el dominio\n";
+            print "4. Haga clic en 'Web Hosting Settings'\n";
         }
         elsif ( $SRC_PANEL eq 'Plesk10' ) {
-            print q{
-1. Inicie sesión en Plesk como "admin"
-2. Haga clic en "Domains"
-3. Haga clic en el dominio
-4. Haga clic en "Change Hosting Settings"
-            };
+            print "1. Inicie sesión en Plesk como 'admin'\n";
+            print "2. Haga clic en 'Domains'\n";
+            print "3. Haga clic en el dominio\n";
+            print "4. Haga clic en 'Change Hosting Settings'\n";
         }
         elsif ( $SRC_PANEL eq 'Plesk10SMB' ) {
-            print q{
-1. Inicie sesión en Plesk como "admin"
-2. Haga clic en "Websites & Domains"
-3. Haga clic en "Website Settings"
-4. Cambie el valor en la casilla "FTP username"
-            };
+            print "1. Inicie sesión en Plesk como 'admin'\n";
+            print "2. Haga clic en 'Websites & Domains'\n";
+            print "3. Haga clic en 'Website Settings'\n";
+            print "4. Cambie el valor en la casilla 'FTP username'\n";
         }
         else {    # Plesk 11+
-            print q{
-1. Inicie sesión en Plesk como "admin"
-2. Haga clic en "Domains"
-3. Haga clic en el dominio
-4. Haga click en la ficha "General"
-5. Haga clic en "Change Hosting Settings"
-            };
+            print "1. Inicie sesión en Plesk como 'admin'\n";
+            print "2. Haga clic en 'Domains'\n";
+            print "3. Haga clic en el dominio\n";
+            print "4. Haga click en la ficha 'General'\n";
+            print "5. Haga clic en 'Change Hosting Settings'\n";
         }
     }
     elsif ( $SRC_PANEL =~ /Ensim/ ) {
-        print q{
-1. Inicie sesión en Ensim como "admin"
-2. Haga clic en "Site Manager"
-3. En la línea que contiene el dominio, haga clic en el icono del lápiz para editar
-        };
+        print "1. Inicie sesión en Ensim como 'admin'\n";
+        print "2. Haga clic en 'Site Manager'\n";
+        print "3. En la línea que contiene el dominio, haga clic en el icono del lápiz para editar\n";
     }
     return;
 }
@@ -2770,55 +2674,33 @@ sub print_parsed_ipaddr_info {
     my ( $src_dedicated_ipaddrs_used, $dst_ipaddrs_free, @sites_on_dedicated_ipaddrs ) = @_;
 
     if ( $src_dedicated_ipaddrs_used > $dst_ipaddrs_free ) {
-        if ( $OPTS->{'es'} == 0 ) {
+        unless ( $OPTS->{'es'} ) {
             print_header('IP Addresses');
-            print qq{
-On the ${SRC_PANEL_NOVERSION} server, the following sites are on dedicated IP addresses:
-
-};
+            print "On the ${SRC_PANEL_NOVERSION} server, the following sites are on dedicated IP addresses:\n";
         }
         else {    #ES
             print_header('Direcciones IP');
-            print "En el servidor de ${SRC_PANEL_NOVERSION}, los siguientes sitios tienen direcciones IP dedicadas:\n\n";
-
+            print "En el servidor de ${SRC_PANEL_NOVERSION}, los siguientes sitios tienen direcciones IP dedicadas:\n";
         }
 
-        print "\n";
+        print "\n\n";
         for my $site ( sort @sites_on_dedicated_ipaddrs ) {
             print "* $site\n";
         }
 
-        if ( $OPTS->{'es'} == 0 ) {
-            print qq{
-
-However, the cPanel server has $dst_ipaddrs_free dedicated IP address(es) available.
-
-
-If the sites listed above need to be placed on dedicated IP addresses, you may need to contact your server provider about adding more IP addresses to your server.
-
-If you are using cPanel 11.38 or higher on an OS with SNI support (such as CentOS 6), then you may not need any additional IP addresses. Please check with your server provider to be sure.
-
-
-Do you need us to place those sites on dedicated IP addresses?
-
-
-[ ] YES   [ ] NO
-            };
+        unless ( $OPTS->{'es'} ) {
+            print "\n\nHowever, the cPanel server has $dst_ipaddrs_free dedicated IP address(es) available.\n\n";
+            print "If the sites listed above need to be placed on dedicated IP addresses, you may need to contact your server provider about adding more IP addresses to your server.\n\n";
+            print "If you are using cPanel 11.38 or higher on an OS with SNI support (such as CentOS 6), then you may not need any additional IP addresses. Please check with your server provider to be sure.\n\n";
+            print "Do you need us to place those sites on dedicated IP addresses?\n\n";
+            print "[ ] YES   [ ] NO\n\n";
         }
         else {    #ES
-            print qq{
-
-Sin embargo, el servidor cPanel tiene $dst_ipaddrs_free IP dedicado(s) disponible(s).
-
-
-Si los sitios mencionados anteriormente deben ser colocados en direcciones IP dedicadas, puede que usted tenga que ponerse en contacto con su proveedor de servidor acerca de cómo agregar más direcciones IP a su servidor.
-
-Si está utilizando cPanel 11.38 o mayor en un sistema operativo con soporte SNI (como CentOS 6), entonces puede que no necesite ninguna de las direcciones IP adicionales. Por favor, consulte con su proveedor de servidor para estar seguro.
-
-¿Necesitas que estos sitios tengan direcciones IP dedicadas?
-
-[ ] SI   [ ] NO
-            };
+            print "\n\nSin embargo, el servidor cPanel tiene $dst_ipaddrs_free IP dedicado(s) disponible(s).\n\n";
+            print "Si los sitios mencionados anteriormente deben ser colocados en direcciones IP dedicadas, puede que usted tenga que ponerse en contacto con su proveedor de servidor acerca de cómo agregar más direcciones IP a su servidor.\n\n";
+            print "Si está utilizando cPanel 11.38 o mayor en un sistema operativo con soporte SNI (como CentOS 6), entonces puede que no necesite ninguna de las direcciones IP adicionales. Por favor, consulte con su proveedor de servidor para estar seguro.\n\n";
+            print "¿Necesitas que estos sitios tengan direcciones IP dedicadas?\n\n";
+            print "[ ] SI   [ ] NO\n\n";
         }
     }
     return;
@@ -2829,28 +2711,20 @@ sub print_parsed_forwarding_domain_info {
 
     return if !%forwarding_domains;
 
-    if ( $OPTS->{'es'} == 0 ) {
+    unless ( $OPTS->{'es'} ) {
         print_header('Forwarding Domains');
-
-        print q{
-We cannot transfer the following forwarding domains, as they are not hosting accounts.
-You can add them in WHM >> Setup/Edit Domain Forwarding (this requires just 1 additional IP address on the cPanel server if one does not exist already):
-
-};
+        print "We cannot transfer the following forwarding domains, as they are not hosting accounts.\n";
+        print "You can add them in WHM >> Setup/Edit Domain Forwarding (this requires just 1 additional IP address on the cPanel server if one does not exist already):\n";
     }
     else {    #ES
         print_header('Dominios reenviar');
-
-        print q{
-No podemos transferir los siguientes forwarding domains, ya que no son cuentas de hosting.
-Usted puede añadirlos en WHM >> Setup/Edit Domain Forwarding (esto requiere sólo 1 dirección IP adicional en el servidor de cPanel si es que uno no existe):
-
-};
+        print "No podemos transferir los siguientes forwarding domains, ya que no son cuentas de hosting.\n";
+        print "Usted puede añadirlos en WHM >> Setup/Edit Domain Forwarding (esto requiere sólo 1 dirección IP adicional en el servidor de cPanel si es que uno no existe):\n";
     }
 
     print "\n";
     for my $domain ( sort keys %forwarding_domains ) {
-        if ( $OPTS->{'es'} == 0 ) {
+        unless ( $OPTS->{'es'} ) {
             print "${domain}: forwarded to -> $forwarding_domains{$domain}\n";
         }
         else {    #ES
@@ -2864,24 +2738,17 @@ sub print_parsed_nohosting_domain_info {
     my @nohosting_domains = @_;
     return if !@nohosting_domains;
 
-    if ( $OPTS->{'es'} == 0 ) {
+    unless ( $OPTS->{'es'} ) {
         print_header('No Hosting domains');
-
-        print q{
-The following are domains that we have found that do not have a hosting plan.
-The cPanel & WHM transfer tools will not be able to transfer these domains.
-In order to make them compatible with the transfer tools, please add hosting to these domains:
-
-};
+        print "The following are domains that we have found that do not have a hosting plan.\n";
+        print "The cPanel & WHM transfer tools will not be able to transfer these domains.\n";
+        print "In order to make them compatible with the transfer tools, please add hosting to these domains:\n";
     }
     else {    #ES
         print_header('Dominios sin hosting');
-        print q{
-Los siguientes son dominios que hemos encontrado que no tienen un plan de hosting.
-Las herramientas de transferencia de cPanel y WHM no serán capaces de transferir estos dominios.
-Con el fin de hacerlos compatibles con las herramientas de transferencia, por favor agregue un plan de hosting a estos dominios:
-
-};
+        print "Los siguientes son dominios que hemos encontrado que no tienen un plan de hosting.\n";
+        print "Las herramientas de transferencia de cPanel y WHM no serán capaces de transferir estos dominios.\n";
+        print "Con el fin de hacerlos compatibles con las herramientas de transferencia, por favor agregue un plan de hosting a estos dominios:\n";
     }
 
     print "\n";
@@ -2897,37 +2764,23 @@ sub print_parsed_tomcat_info {
     if ( $src_tomcat and not $dst_tomcat ) {
         print_header('Tomcat');
         if ( $dst_ea4 || version_compare( $dst_os_ver, qw( >= 7 ) ) ) {
-            if ( $OPTS->{'es'} == 0 ) {
-                print qq{
-Tomcat is installed on the ${SRC_PANEL_NOVERSION} server, but is not supported on the cPanel server due to OS and/or EasyApache 4 incompatibility.
-                };
+            unless ( $OPTS->{'es'} ) {
+                print "Tomcat is installed on the ${SRC_PANEL_NOVERSION} server, but is not supported on the cPanel server due to OS and/or EasyApache 4 incompatibility.\n";
             }
             else {    #ES
-                print qq{
-Tomcat esta instalado en el ${SRC_PANEL_NOVERSION} server, pero esto no es soportado en el servidor de cPanel debido a una incompatibilidad con el Sistema Operativo y/o EasyApache 4.
-                };
+                print "Tomcat esta instalado en el ${SRC_PANEL_NOVERSION} server, pero esto no es soportado en el servidor de cPanel debido a una incompatibilidad con el Sistema Operativo y/o EasyApache 4.\n";
             }
         }
         else {        # EA3 and CentOS <= 6
-            if ( $OPTS->{'es'} == 0 ) {
-                print qq{
-Tomcat is installed on the ${SRC_PANEL_NOVERSION} server, but not on the cPanel server.
-
-Do you need us to install Tomcat on the cPanel server?
-
-
-[ ] YES  [ ] NO
-
-                };
+            unless ( $OPTS->{'es'} ) {
+                print "Tomcat is installed on the ${SRC_PANEL_NOVERSION} server, but not on the cPanel server.\n\n";
+                print "Do you need us to install Tomcat on the cPanel server?\n\n";
+                print "[ ] YES  [ ] NO\n\n";
             }
             else {    #ES
-                print qq{
-Tomcat está instalado en el servidor ${SRC_PANEL_NOVERSION}, pero no en el servidor cPanel.
-
-¿Necesiten que instalemos Tomcat en el servidor de cPanel?
-
-[ ] SI   [ ] NO
-                };
+                print "Tomcat está instalado en el servidor ${SRC_PANEL_NOVERSION}, pero no en el servidor cPanel.\n\n";
+                print "¿Necesiten que instalemos Tomcat en el servidor de cPanel?\n\n";
+                print "[ ] SI   [ ] NO\n\n";
             }
         }
     }
@@ -2939,29 +2792,17 @@ sub print_parsed_coldfusion_info {
 
     if ( $src_coldfusion and not $dst_coldfusion ) {
         print_header('ColdFusion');
-
-        if ( $OPTS->{'es'} == 0 ) {
-            print qq{
-
-ColdFusion appears to be running on the ${SRC_PANEL_NOVERSION} server, but not on the cPanel server.
-
-cPanel does not support the installation, configuration, or maintenance of ColdFusion.
-
-If your websites require ColdFusion, they will not work if it is not installed.
-
-If you need assistance with installing ColdFusion, you would need to contact your sysadmin.
-            };
+        unless ( $OPTS->{'es'} ) {
+            print "ColdFusion appears to be running on the ${SRC_PANEL_NOVERSION} server, but not on the cPanel server.\n\n";
+            print "cPanel does not support the installation, configuration, or maintenance of ColdFusion.\n\n";
+            print "If your websites require ColdFusion, they will not work if it is not installed.\n\n";
+            print "If you need assistance with installing ColdFusion, you would need to contact your sysadmin.\n\n";
         }
         else {    #ES
-            print qq{
-ColdFusion parece estar en ejecución en el servidor ${SRC_PANEL_NOVERSION}, pero no en el servidor cPanel.
-
-cPanel does not support the installation, configuration, or maintenance of ColdFusion.
-
-Si sus páginas web requieren ColdFusion, no van a funcionar si no está instalado.
-
-Si usted necesita ayuda con la instalación de ColdFusion, usted tendría que ponerse en contacto con su administrador de sistemas.
-            };
+            print "ColdFusion parece estar en ejecución en el servidor ${SRC_PANEL_NOVERSION}, pero no en el servidor cPanel.\n\n";
+            print "cPanel does not support the installation, configuration, or maintenance of ColdFusion.\n\n";
+            print "Si sus páginas web requieren ColdFusion, no van a funcionar si no está instalado.\n\n";
+            print "Si usted necesita ayuda con la instalación de ColdFusion, usted tendría que ponerse en contacto con su administrador de sistemas.\n\n";
         }
     }
     return;
@@ -2973,25 +2814,15 @@ sub print_parsed_reseller_username_conflicts {
 
     @reseller_username_conflicts = sort @reseller_username_conflicts;
 
-    if ( $OPTS->{'es'} == 0 ) {
+    unless ( $OPTS->{'es'} ) {
         print_header('Reseller Username Conflicts');
-
-        print qq{
-Plesk allows duplicate usernames for resellers and system accounts, while cPanel does not.
-
-As such, the following usernames will need to be renamed to something unique before they can be copied:
-
-};
+        print "Plesk allows duplicate usernames for resellers and system accounts, while cPanel does not.\n\n";
+        print "As such, the following usernames will need to be renamed to something unique before they can be copied:\n\n";
     }
     else {    #ES
         print_header('Conflictos de Nombre de usuarios de revendedores');
-
-        print q{
-Plesk permite los nombres de usuario duplicados para los revendedores y las cuentas del sistema, mientras que cPanel no lo hace.
-
-Como tal, tendrá que ser cambiado a algo único antes de que se pueden copiar los siguientes nombres de usuario:
-
-};
+        print "Plesk permite los nombres de usuario duplicados para los revendedores y las cuentas del sistema, mientras que cPanel no lo hace.\n\n";
+        print "Como tal, tendrá que ser cambiado a algo único antes de que se pueden copiar los siguientes nombres de usuario:\n\n";
     }
 
     for my $reseller (@reseller_username_conflicts) {
@@ -3007,58 +2838,39 @@ sub print_parsed_mysql_openfileslimit {
 
     if ( $open_files_limit < 10_000 ) {
         print_header('MySQL open_files_limit');
-
-        if ( $OPTS->{'es'} == 0 ) {
-            print qq{
-On the cPanel server, MySQL's open_files_limit is set to $open_files_limit which may be lower
-than what is necessary to successfully copy databases. I recommend increasing this to 10000
-and restarting MySQL. If you'd like, we can do this for you by backing up /etc/my.cnf, adding
-open_files_limit=10000 to the file, and restarting MySQL.
-
-May we raise the open_files_limit setting for MySQL?
-
-[ ] YES  [ ] NO
-            };
+        unless ( $OPTS->{'es'} ) {
+            print "On the cPanel server, MySQL's open_files_limit is set to $open_files_limit which may be lower than what is necessary to successfully copy databases.\n\n";
+            print "I recommend increasing this to 10000 and restarting MySQL. If you'd like, we can do this for you by backing up /etc/my.cnf, adding open_files_limit=10000 to the file, and restarting MySQL.\n\n";
+            print "May we raise the open_files_limit setting for MySQL?\n\n";
+            print "[ ] YES  [ ] NO\n\n";
         }
         else {    #ES
-            print q{
-Los open_files_limit de MySQL en el servidor cPanel tienen el valor de 1024. Este valor es menos de lo que recomendamos , que puede ser inferior a lo que es necesario copiar correctamente las bases de datos. Recomiendo aumentar esto a 10000 y reiniciar MySQL. Si usted desea, podemos hacerlo para usted antes haríamos una copia de /etc/ my.cnf, añadiendo open_files_limit = 10000 para el archivo y reiniciaremos  MySQL.
-
-Podemos aumentar el ajuste de open_files_limit para MySQL?
-
-[ ] SI [ ] NO
-            };
+            print "Los open_files_limit de MySQL en el servidor cPanel tienen el valor de 1024. Este valor es menos de lo que recomendamos , que puede ser inferior a lo que es necesario copiar correctamente las bases de datos.\n\n";
+            print "Recomiendo aumentar esto a 10000 y reiniciar MySQL. Si usted desea, podemos hacerlo para usted antes haríamos una copia de /etc/ my.cnf, añadiendo open_files_limit = 10000 para el archivo y reiniciaremos  MySQL.\n\n";
+            print "Podemos aumentar el ajuste de open_files_limit para MySQL?\n\n";
+            print "[ ] SI  [ ] NO\n\n";
         }
     }
+    print "\n";
     return;
 }
 
 sub print_parsed_mysql_skip_networking {
     my $skip_networking = shift;
-    return if !$skip_networking;
+    return unless $skip_networking;
 
-    print_header('MySQL skip-networking');
-
-    if ( $OPTS->{'es'} == 0 ) {
-        print qq{
-On the cPanel server, MySQL's skip-networking option is enabled. This can prevent databases
-from restoring properly. This option needs to be disabled throughout the migration process.
-
-May we disable MySQL's skip-networking setting on the cPanel server?
-
-[ ] YES  [ ] NO
-        };
+    print_header('MySQL skip_networking');
+    unless ( $OPTS->{'es'} ) {
+        print "On the cPanel server, MySQL's skip_networking option is enabled. This can prevent databases from restoring properly. This option needs to be disabled throughout the migration process.\n\n";
+        print "May we disable MySQL's skip_networking setting on the cPanel server?\n\n";
+        print "[ ] YES  [ ] NO\n\n";
     }
     else {    # ES
-        print q{
-En el servidor de cPanel, está habilitada la opción skip-networking de MySQL. Esto puede impedir
-que las bases de datos se puedan restaurar correctamente. Esta opción debe ser deshabitado durante todo el proceso de migración.
-
-¿Podemos desactivar la opción de skip-networking de MySQL en el servidor cPanel?
-
-[ ] SI  [ ] NO
-        };
+        print "En el servidor de cPanel, está habilitada la opción skip_networking de MySQL. Esto puede impedir que las bases de datos se puedan restaurar correctamente. Esta opción debe ser deshabitado durante todo el proceso de migración.\n\n";
+        print "¿Podemos desactivar la opción de skip_networking de MySQL en el servidor cPanel?\n\n";
+        print "[ ] SI  [ ] NO\n\n";
     }
+    print "\n";
     return;
 }
 
@@ -3068,33 +2880,19 @@ sub print_parsed_mysql_old_style_passwords_info {
     $cpanel_mysql_version = substr $cpanel_mysql_version, 0, 2;
 
     if ( defined $mysql_old_style_passwords == 1 and $cpanel_mysql_version >= 56 ) {
-        if ( $OPTS->{'es'} == 0 ) {
-            print_header('MySQL 5.6 and old-passwords=1');
-            print qq{
-The ${SRC_PANEL_NOVERSION} server is using the "old-passwords=1" option. However, the cPanel server
-is using MySQL 5.6. These are not compatible. The only known workarounds at this time are:
-
-1) Set up a cPanel server with MySQL 5.1 or 5.5, OR
-
-2) Disable the old-passwords=1 option for MySQL on the ${SRC_PANEL_NOVERSION} server and reapply
-all of the MySQL users' passwords. Then verify in the mysql.user contains the new style passwords
-for each user.
-            };
+        unless ( $OPTS->{'es'} ) {
+            print_header('MySQL 5.6 and old_passwords=1');
+            print "The ${SRC_PANEL_NOVERSION} server is using the 'old_passwords=1' option. However, the cPanel server is using MySQL 5.6. These are not compatible. The only known workarounds at this time are:\n\n";
+            print "1) Set up a cPanel server with MySQL 5.1 or 5.5, OR\n\n";
+            print "2) Disable the old-passwords=1 option for MySQL on the ${SRC_PANEL_NOVERSION} server and reapply all of the MySQL users' passwords. Then verify in the mysql.user contains the new style passwords for each user.\n\n";
         }
         else {
-            print_header('MySQL 5.6 y old-passwords=1');
-            print qq{
-El servidor ${SRC_PANEL_NOVERSION} está utilizando la opción "old-passwords=1". Sin embargo,
-el servidor cPanel esta usando MySQL 5.6. Estos no son compatibles. Las soluciones conocidas
-solamente en este momento son:
-
-1) Configurar un servidor cPanel con MySQL 5.1 o 5.5, o
-
-2) Deshabilitar los old-passwords=1 opción para MySQL en el servidor ${SRC_PANEL_NOVERSION}
-y vuelva a aplicar todas las contraseñas de los usuarios MySQL. Compruebe en el mysql.user contiene
-las nuevas contraseñas de estilo para cada usuario.
-            };
+            print_header('MySQL 5.6 y old_passwords=1');
+            print "El servidor ${SRC_PANEL_NOVERSION} está utilizando la opción 'old_passwords=1'. Sin embargo, el servidor cPanel esta usando MySQL 5.6. Estos no son compatibles. Las soluciones conocidas solamente en este momento son:\n\n";
+            print "1) Configurar un servidor cPanel con MySQL 5.1 o 5.5, o\n\n";
+            print "2) Deshabilitar los old-passwords=1 opción para MySQL en el servidor ${SRC_PANEL_NOVERSION} y vuelva a aplicar todas las contraseñas de los usuarios MySQL. Compruebe en el mysql.user contiene las nuevas contraseñas de estilo para cada usuario.\n\n";
         }
+        print "\n";
     }
     return;
 }
@@ -3112,93 +2910,64 @@ sub print_parsed_phpini_items {    ## no critic (ManyArgs)
 
     if ( $src_phpini_memory_limit and $dst_phpini_memory_limit ) {
         if ( $src_phpini_memory_limit > $dst_phpini_memory_limit ) {
-            $addendum .= qq{
-memory_limit:
-
-    ${SRC_PANEL_NOVERSION}: ${src_phpini_memory_limit}M
-    cPanel: ${dst_phpini_memory_limit}M
-            };
+            $addendum .= "\nmemory_limit:\n\n";
+            $addendum .= "    ${SRC_PANEL_NOVERSION}: ${src_phpini_memory_limit}M\n";
+            $addendum .= "    cPanel: ${dst_phpini_memory_limit}M\n";
         }
     }
 
     if ( $src_phpini_post_max_size and $dst_phpini_post_max_size ) {
         if ( $src_phpini_post_max_size > $dst_phpini_post_max_size ) {
-            $addendum .= qq{
-post_max_size:
-
-    ${SRC_PANEL_NOVERSION}: ${src_phpini_post_max_size}M
-    cPanel: ${dst_phpini_post_max_size}M
-            };
+            $addendum .= "\npost_max_size:\n\n";
+            $addendum .= "    ${SRC_PANEL_NOVERSION}: ${src_phpini_post_max_size}M\n";
+            $addendum .= "    cPanel: ${dst_phpini_post_max_size}M\n";
         }
     }
 
     if ( $src_phpini_upload_max_filesize and $dst_phpini_upload_max_filesize ) {
         if ( $src_phpini_upload_max_filesize > $dst_phpini_upload_max_filesize ) {
-            $addendum .= qq{
-upload_max_filesize:
-
-    ${SRC_PANEL_NOVERSION}: ${src_phpini_upload_max_filesize}M
-    cPanel: ${dst_phpini_upload_max_filesize}M
-            };
+            $addendum .= "\nupload_max_filesize:\n\n";
+            $addendum .= "    ${SRC_PANEL_NOVERSION}: ${src_phpini_upload_max_filesize}M\n";
+            $addendum .= "    cPanel: ${dst_phpini_upload_max_filesize}M\n";
         }
     }
 
     if ( $src_phpini_date_timezone and $dst_phpini_date_timezone ) {
         if ( $src_phpini_date_timezone ne $dst_phpini_date_timezone ) {
-            $addendum .= qq{
-date.timezone:
-
-    ${SRC_PANEL_NOVERSION}: ${src_phpini_date_timezone}
-    cPanel: ${dst_phpini_date_timezone}
-            };
+            $addendum .= "\ndate.timezone:\n\n";
+            $addendum .= "    ${SRC_PANEL_NOVERSION}: ${src_phpini_date_timezone}\n";
+            $addendum .= "    cPanel: ${dst_phpini_date_timezone}\n";
         }
     }
 
     if ( $src_phpini_output_buffering and $dst_phpini_output_buffering ) {
         if ( $src_phpini_output_buffering ne $dst_phpini_output_buffering ) {
-            $addendum .= qq{
-output_buffering:
-
-    ${SRC_PANEL_NOVERSION}: ${src_phpini_output_buffering}
-    cPanel: ${dst_phpini_output_buffering}
-            };
+            $addendum .= "\noutput_buffering:\n\n";
+            $addendum .= "    ${SRC_PANEL_NOVERSION}: ${src_phpini_output_buffering}\n";
+            $addendum .= "    cPanel: ${dst_phpini_output_buffering}\n";
         }
     }
 
     if ($addendum) {
-        if ( $OPTS->{'es'} == 0 ) {
+        unless ( $OPTS->{'es'} ) {
             print_header('php.ini Settings');
-            print qq{
-We have checked several of the most commonly customized configuration options in php.ini and found some differences.
-
-To ensure that PHP applications function properly on the cPanel server, it is recommended that the settings be the same on both servers.
-
-The differences that we found are listed below:
-
-$addendum
-
-Would you like us to modify php.ini on the cPanel server to use the same configuration settings listed above?
-
-
-[ ] YES  [ ] NO
-            };
+            print "We have checked several of the most commonly customized configuration options in php.ini and found some differences.\n\n";
+            print "To ensure that PHP applications function properly on the cPanel server, it is recommended that the settings be the same on both servers.\n\n";
+            print "The differences that we found are listed below:\n";
+            print $addendum . "\n";
+            print "Would you like us to modify php.ini on the cPanel server to use the same configuration settings listed above?\n\n";
+            print "[ ] YES  [ ] NO\n\n";
         }
         else {    #ES
             print_header('Configuración php.ini');
-            print qq{
-Hemos revisado varias de las opciones de configuración más comúnmente personalizados en php.ini y encontramos algunas diferencias.
-
-Para asegurarse de que las aplicaciones PHP funcionan correctamente en el servidor de cPanel, se recomienda que los ajustes sean los mismos en ambos servidores.
-
-Las diferencias encontradas se enumeran a continuación:
-
-$addendum
-
-¿Quieres que modifiquemos php.ini en el servidor cPanel utilizar los mismos ajustes de configuración mencionados anteriormente?
-
-[ ] SI  [ ] NO
-            };
+            print "Hemos revisado varias de las opciones de configuración más comúnmente personalizados en php.ini y encontramos algunas diferencias.\n\n";
+            print "Para asegurarse de que las aplicaciones PHP funcionan correctamente en el servidor de cPanel, se recomienda que los ajustes sean los mismos en ambos servidores.\n\n";
+            print "Las diferencias encontradas se enumeran a continuación:\n\n";
+            print $addendum . "\n";
+            print "¿Quieres que modifiquemos php.ini en el servidor cPanel utilizar los mismos ajustes de configuración mencionados anteriormente?\n\n";
+            print "[ ] SI  [ ] NO\n\n";
         }
+        print "\n";
     }
     return;
 }
@@ -3252,16 +3021,12 @@ sub print_htype_none {
 sub check_for_dns_clustering {
     return if !-e '/var/cpanel/useclusteringdns';
 
-    if ( $OPTS->{'es'} == 0 ) {
+    unless ( $OPTS->{'es'} ) {
         print_header('DNS CLUSTERING (for libkeyutils migrations)');
-        print qq{
-The following cluster members were found to be configured on this server
-(note: the reverse trust relationship is not known, and would need to be
-determined by logging into WHM on the cluster server and checking it there):
-
-};
+        print "The following cluster members were found to be configured on this server (note: the reverse trust relationship is not known, and would need to be determined by logging into WHM on the cluster server and checking it there):\n\n";
     }
     else {    #ES
+        print "The following cluster members were found to be configured on this server (note: the reverse trust relationship is not known, and would need to be determined by logging into WHM on the cluster server and checking it there):\n\n";
     }
 
     my $cluster_dir = '/var/cpanel/cluster/root/config';
@@ -3329,23 +3094,20 @@ determined by logging into WHM on the cluster server and checking it there):
 sub print_parsed_mysql_username_conflicts {
     my @mysql_username_conflicts = @_;
     my $count                    = 1;
-    if ( $OPTS->{'es'} == 0 ) {
+    unless ( $OPTS->{'es'} ) {
         print_header('mysql Username Conflicts');
-        print qq{
-mysql username conflicts have been found. To fix, please rename the user(s) specified below:
-
-};
+        print "MySQL username conflicts have been found. To fix, please rename the user(s) specified below:\n\n";
     }
     else {    #ES
         print_header('conflictos de nombre de usuario mysql');
-        print "\nSe han encontrado conflictos con nombre(s) de usuario(s) de mysql. Para solucionarlo, cambie el nombre del usuario(s):\n\n";
+        print "Se han encontrado conflictos con nombre(s) de usuario(s) de MySQL. Para solucionarlo, cambie el nombre del usuario(s):\n\n";
     }
 
     for my $conflict (@mysql_username_conflicts) {
         my ( $domain1, $user, $domain2 ) = split /:/, $conflict;
 
         # subscription1.test has mysql user "example", but there is a Plesk account named example, owned by example.com
-        if ( $OPTS->{'es'} == 0 ) {
+        unless ( $OPTS->{'es'} ) {
             print "[CONFLICT $count] $domain1 has mysql user \"$user\" (to fix, rename ${domain2}'s \"$user\")\n";
         }
         else {    #ES
@@ -3354,7 +3116,7 @@ mysql username conflicts have been found. To fix, please rename the user(s) spec
         $count++;
     }
 
-    if ( $OPTS->{'es'} == 0 ) {
+    unless ( $OPTS->{'es'} ) {
         print_username_change_info();
     }
     else {
@@ -3743,6 +3505,7 @@ sub create_cpmig_user {
 sub opts_get {
     my $badopt = 0;
     my %opts   = (
+        'cpanelsource'      => 0,
         'createkeys'        => 0,
         'createuser'        => 0,
         'cpmigticket'       => undef,
@@ -3756,17 +3519,18 @@ sub opts_get {
     );
 
     Getopt::Long::GetOptions(
-        'create-keys|createkeys' => \$opts{'createkeys'},
-        'create-user|createuser' => \$opts{'createuser'},
-        'cpmigticket=i'          => \$opts{'cpmigticket'},
-        'cpmiguser=s'            => \$opts{'cpmiguser'},
-        'cpmigkey=s'             => \$opts{'cpmigkey'},
-        'debug'                  => \$DEBUG,
-        'es'                     => \$opts{'es'},
-        'full-help|fullhelp'     => \$opts{'full-help'},
-        'inputfile=s'            => \$opts{'inputfile'},
-        'updateuserdomains'      => \$opts{'updateuserdomains'},
-        'usage|help|h'           => \$opts{'help'}
+        'cpanel-source|cpanelsource' => \$opts{'cpanelsource'},
+        'create-keys|createkeys'     => \$opts{'createkeys'},
+        'create-user|createuser'     => \$opts{'createuser'},
+        'cpmigticket=i'              => \$opts{'cpmigticket'},
+        'cpmiguser=s'                => \$opts{'cpmiguser'},
+        'cpmigkey=s'                 => \$opts{'cpmigkey'},
+        'debug'                      => \$DEBUG,
+        'es'                         => \$opts{'es'},
+        'full-help|fullhelp'         => \$opts{'full-help'},
+        'inputfile=s'                => \$opts{'inputfile'},
+        'updateuserdomains'          => \$opts{'updateuserdomains'},
+        'usage|help|h'               => \$opts{'help'}
     ) or $badopt = 1;
 
     $opts{'inputfile'} = shift @ARGV unless defined( $opts{'inputfile'} );
