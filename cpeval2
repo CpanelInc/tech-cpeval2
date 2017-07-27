@@ -382,6 +382,9 @@ sub get_control_panel_and_set_prefix {    ## no critic (ExcessComplexity)
 
                 if ( open my $key_fh, '<', "/etc/sw/keys/keys/$plesk_key" ) {
                     while (<$key_fh>) {
+                        if (/PPA\./) {
+                            die("We're very sorry, but this appears to be a Plesk Automation (PPA) server which is not supported for migration.\n");
+                        }
                         if (/Small Business Panel 10/) {
                             $PREFIX         = 's:Plesk10SMB:';
                             $IS_PLESK_SMB10 = 1;
