@@ -5,9 +5,11 @@ PERLCRITIC=perlcritic
 PERLCRITICRC=tools/.perlcriticrc
 PERLTIDY=perltidy
 PERLTIDYRC=tools/.perltidyrc
+EMPTY=
 NEW_VER=$(shell grep 'my $$VERSION' $(PROJECT) | awk '{print $$4}' | sed -e "s/'//g" -e 's/;//')
 NEW_SHASUM_CMD=shasum -a 512 $(PROJECT) | awk '{print $$1}'
-NEW_SHASUM_SUFFIX=    cpeval2 $(NEW_VER)
+NEW_SHASUM_SEPARATOR=$(EMPTY)    #4 spaces - Make strips leading/trailing spaces unless protected.
+NEW_SHASUM_SUFFIX=$(NEW_SHASUM_SEPARATOR)cpeval2 $(NEW_VER)
 
 .DEFAULT: help
 .IGNORE: clean
@@ -45,7 +47,7 @@ SHA512SUM: tidy
 		echo "Version $(NEW_VER) already exists in SHA512SUM!"; \
 		exit 2; \
 	else \
-		sed -i '1i$(shell $(NEW_SHASUM_CMD))$(NEW_VER_SUFFIX)' SHA512SUM && echo "Updated SHA512SUM"; \
+		sed -i '1i$(shell $(NEW_SHASUM_CMD))$(NEW_SHASUM_SUFFIX)' SHA512SUM && echo "Updated SHA512SUM"; \
 	fi
 
 $(PROJECT).tdy: $(PROJECT)
