@@ -2807,6 +2807,9 @@ sub print_parsed_nohosting_domain_info {
         print_header('No Hosting domains');
         print "The following are domains that we have found that do not have a hosting plan.\n";
         print "The cPanel & WHM transfer tools will not be able to transfer these domains.\n";
+        print "You can try converting these to hosting domains by using a command such as this:\n";
+        print "   /usr/local/psa/bin/domain --update domain.tld -hst_type phys -hosting true\n";
+        print "You can also use Plesk Control Panel > Websites & Domains, select the domain name, then Hosting Type > Change.\n";
         print "In order to make them compatible with the transfer tools, please add hosting to these domains:\n";
     }
     else {    #ES
