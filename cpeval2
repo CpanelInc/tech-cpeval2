@@ -1719,13 +1719,27 @@ sub print_prefixed_user_config_problems {
 }
 
 sub print_prefixed_php_information {
+    my %ini = map { $_ => undef } qw (
+      allow_url_fopen
+      allow_url_include
+      date.timezone
+      memory_limit
+      output_buffering
+      post_max_size
+      upload_max_filesize
+    );
+
     my $phpini;
-    my $php_out = `php -r '\$values=array("date.timezone","memory_limit","output_buffering","post_max_size","upload_max_filesize"); foreach (\$values as &\$value) {echo \$value . "=" . ini_get(\$value) . "\n";}' 2> /dev/null`;
-    my %ini = defined($php_out) ? map { ( split( /=/, $_, 2 ) )[ 0, 1 ] } split( /\n/, $php_out ) : ();
-    if ( keys(%ini) ) {
-        $ini{'parsed'} = 'php_output';
+    my $php_want_array = q{"} . join( q{","}, sort keys %ini ) . q{"};
+    my $php_out = `php -r '\$values=array(${php_want_array}); foreach (\$values as &\$value) {echo \$value . "=" . ini_get(\$value) . "\n";}' 2> /dev/null`;
+    %ini = ( %ini, defined($php_out) ? map { ( split( /=/, $_, 2 ) )[ 0, 1 ] } split( /\n/, $php_out ) : () );
+    for my $value ( values(%ini) ) {
+        if ( defined $value ) {
+            $ini{'parsed'} = 'php_output';
+            last;
+        }
     }
-    else {
+    unless ( defined $ini{'parsed'} ) {
         if ( $IS_PLESK or $IS_PLESK_SMB10 or $IS_ENSIM ) {
             $phpini = '/etc/php.ini';
         }
@@ -1734,40 +1748,35 @@ sub print_prefixed_php_information {
         }
         if ( defined($phpini) && open my $file_fh, '<', $phpini ) {
             while ( my $line = <$file_fh> ) {
-                if ( $line =~ m{ \A (?:[\s\t]+)? memory_limit (?:[\s\t]+)? = (?:[\s\t]+)? ["']? (\d+)M ['"]? }xms ) {
-                    $ini{'memory_limit'} = $1;
-                }
-                if ( $line =~ m{ \A (?:[\s\t]+)? post_max_size (?:[\s\t]+)? = (?:[\s\t]+)? ["']? (\d+)M ['"]? }xms ) {
-                    $ini{'post_max_size'} = $1;
-                }
-                if ( $line =~ m{ \A (?:[\s\t]+)? upload_max_filesize (?:[\s\t]+)? = (?:[\s\t]+)? ["']? (\d+)M ['"]? }xms ) {
-                    $ini{'upload_max_filesize'} = $1;
-                }
-                if ( $line =~ m{ \A date\.timezone (?:\s+)? = (?:\s+)? (?:["'])? ([^"']+) (?:["'])? (?:\s+)? \z }xms ) {
-                    $ini{'date.timezone'} = $1;
-                }
-                if ( $line =~ m{ \A \s* output_buffering \s* = ["'\s]* ([^"'\s]+) ['"\s]* \z }xms ) {
-                    $ini{'output_buffering'} = $1;
-                }
+                next if $line =~ m{ \A \s* (?:;|\Z) }xms;
+                my ( $key, $value ) = split( /\s*=\s*/, $line );
+                $key =~ s{ \A \s* }{}xms;
+                $key = lc($key);
+                next unless exists $ini{$key};
+                chomp $value;
+                $value =~ s{ ; .* \Z }{}xms;
+                $value =~ s{ \s* \Z }{}xms;
+                $value =~ s{ \A ['"] (.*) ['"] \Z}{$1}xms;
+                $ini{$key} = $value;
             }
             close $file_fh;
             $ini{'parsed'} = $phpini;
         }
-        else {
-            $ini{'parsed'} = 'FAIL';
-        }
     }
-    foreach my $bool (qw( output_buffering )) {    # These will return 0/1 from ini_get but are Off/On in php.ini
+
+    $ini{'parsed'} = 'FAIL' unless defined $ini{'parsed'};
+
+    foreach my $bool (qw( output_buffering allow_url_fopen allow_url_include )) {    # These will return 0/1 from ini_get but are Off/On in php.ini
         next unless defined $ini{$bool};
         $ini{$bool} = ( $ini{$bool} eq "0" ) ? "Off" : $ini{$bool};
         $ini{$bool} = ( $ini{$bool} eq "1" ) ? "On"  : $ini{$bool};
     }
-    foreach my $num (qw( memory_limit post_max_size upload_max_filesize )) {    # Strip the 'M' suffix from these
+    foreach my $num (qw( memory_limit post_max_size upload_max_filesize )) {         # Strip the 'M' suffix from these
         next unless defined $ini{$num};
-        $ini{$num} =~ tr/M//d;
+        $ini{$num} =~ s{ M \Z }{}xmsi;
     }
     foreach my $key ( sort( keys(%ini) ) ) {
-        next if !defined( $ini{$key} );
+        next if not defined( $ini{$key} ) or $ini{$key} eq "";
         my $printkey = uc($key);
         $printkey =~ tr/./_/;
         print $PREFIX . "PHPINI_" . $printkey . ":" . $ini{$key} . "\n";
