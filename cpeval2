@@ -64,13 +64,17 @@ An input file is a text file containing cpeval2 prefixed output from "Mode 1" on
 
 =over
 
+=item B<--cpanel-source>
+
+Necessary to run cpeval2 in "Mode 1" on a cPanel source server.  Without this flag cpeval2 assumes that a cPanel server is the destination.
+
 =item B<--create-keys>
 
 For use only on a destination (cPanel) server.  Creates a unique SSH key-pair to be used for a dedicated migration user account on the source server, and provides copy/paste output that can be executed on the source server to create the account.  It is automatically used the first time you run cpeval2 on a cPanel server.
 
 =item B<--updateuserdomains>
 
-For use only on a third-party source (non-cPanel) server.  Downloads and executes the updateuserdomains-universal script to populate /etc/trueuserdomains.
+For use only on a third-party source (non-cPanel) server.  Downloads and executes the updateuserdomains-universal script to populate /etc/trueuserdomains.  It is automatically used if /etc/trueuserdomains is more than 30 minutes old or does not exist.
 
 =item B<--es>
 
@@ -82,9 +86,13 @@ For use only with "Mode 2", this provides output in Spanish.
 
 =over
 
-=item Run cpeval2 for the first time on a source or destination server (Mode 1):
+=item Run cpeval2 for the first time on a third-party source or cPanel destination server (Mode 1):
 
 B<cpeval2>
+
+=item Run cpeval2 for the first time on a cPanel source server (Mode 1):
+
+B<cpeval2 --cpanel-source>
 
 =item Run cpeval2 after "Mode 1" prefixed output from both servers has been copied into "cpeval2-compare.txt":
 
