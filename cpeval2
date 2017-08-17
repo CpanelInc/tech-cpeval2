@@ -182,6 +182,7 @@ my @BADUSERS;               # if mysql username conflicts are detected, skip any
 
 my $TUD_BY_USER;
 my $TUD_BY_DOMAIN;
+my $TUD_USER_NUM = 0;
 
 get_control_panel_and_set_prefix();
 verify_mysql_connectivity();
@@ -202,6 +203,7 @@ if ( $OPTS->{'updateuserdomains'} ) {
 ## behave like the original cpeval
 if ( !$OPTS->{'inputfile'} ) {
     ( $TUD_BY_USER, $TUD_BY_DOMAIN ) = _get_trueuserdomains_hashrefs();
+    $TUD_USER_NUM = scalar keys %{$TUD_BY_USER};
     print_control_panel_info();
     print_os_info();
     print_perl_info();
@@ -279,6 +281,10 @@ submit_stats_info();
 check_for_missing_scp();
 
 auto_create_keypair( $CPMIGUSER, $TICKET ) unless $OPTS->{'inputfile'};
+
+print_dest_existing_accounts();
+
+print "\n";
 
 exit 0;
 
@@ -996,17 +1002,7 @@ sub print_mem_info {
 }
 
 sub print_number_of_accounts {
-    my $account_num;
-
-    if ( -f '/etc/trueuserdomains' ) {
-        chomp( $account_num = `sort -u /etc/trueuserdomains | wc -l` );
-    }
-    else {
-        die '/etc/trueuserdomains missing!' unless $IS_CPANEL_DEST;
-        $account_num = 0;
-    }
-
-    print_format( 'Accounts', $account_num );
+    print_format( 'Accounts', $TUD_USER_NUM );
     return;
 }
 
@@ -1498,9 +1494,12 @@ sub _get_trueuserdomains_hashrefs {
     if ( open my $tud_fh, '<', $tud ) {
         while (<$tud_fh>) {
             chomp;
-            my ( $domain, $user ) = ( split( /\s*:\s*/, $_, 3 ) )[ 0, 1 ];
 
             # Must let undefined values pass through in order for badusers check to work.
+            my ( $domain, $user ) = ( split( /\s*:\s*/, $_, 3 ) )[ 0, 1 ];
+
+            # ticket system creates temporary user in cp12345678abcdef format, ignore these
+            next if defined $user and $user =~ /^cp[0-9]{7,8}[a-z]{6}$/;
 
             # strip site number from Ensim usernames
             $user =~ s/\^site(\d+)//g if defined $user;
@@ -2023,6 +2022,16 @@ sub print_reseller_username_conflicts {
             }
         }
     }
+    return;
+}
+
+sub print_dest_existing_accounts {
+    return unless $IS_CPANEL_DEST;
+    return if $TUD_USER_NUM < 2;
+    print "\n";
+    print BOLD RED ON_BLACK "!!! ATTENTION !!!" . RESET . ": " . $TUD_USER_NUM . " accounts exist on this destination server.\n";
+    print "Ensure that this destination server has been freshly installed as a destination for account migration.\n";
+    print "See https://documentation.cpanel.net/display/CKB/cPanel+Migration+Services+and+Guides for migration requirements.\n";
     return;
 }
 
@@ -3187,7 +3196,7 @@ sub submit_stats_info {
     return if !( $panelmajor =~ /^\d+$/ );
     $panelminor = $panelminor ? $panelminor : '0';
 
-    $account_num = scalar keys %{$TUD_BY_USER};
+    $account_num = $TUD_USER_NUM;
 
     my $submit = "panelname=" . $panelname . "&panelver=" . $panelmajor . "." . $panelminor . "&numaccount=" . $account_num;
     my $header = "GET /submit.cgi?" . $submit . " HTTP/1.1\r\nHost: " . $submit_host . "\r\n\r\n";
@@ -3290,7 +3299,7 @@ sub auto_create_keypair {
         $create_key = 1;
     }
     if ( check_for_hacked_server_touchfile() ) {
-        print "Hacked server touch-file found, NOT auto-creating SSH keypair for migration.\n";
+        print "\nHacked server touch-file found, NOT auto-creating SSH keypair for migration.\n";
         return;
     }
     else {
@@ -3298,7 +3307,7 @@ sub auto_create_keypair {
             create_cpmig_keypair( $user, $ticket );
         }
         else {
-            print "Existing cpmig SSH key pair detected at " . $privkey_file . "\n";
+            print "\nExisting cpmig SSH key pair detected at " . $privkey_file . "\n";
         }
     }
     return;
