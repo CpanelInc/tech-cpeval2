@@ -152,11 +152,13 @@ my $PREFIX;    # d: or s:Plesk9 or s:DirectAdmin, etc.
 my $APACHE_BIN;
 my $PYTHON_BIN;
 
-my $IS_CPANEL      = 0;
-my $IS_PLESK       = 0;
-my $IS_PLESK_SMB10 = 0;
-my $IS_ENSIM       = 0;
-my $IS_DA          = 0;
+my $IS_CPANEL        = 0;
+my $IS_CPANEL_DEST   = 0;
+my $IS_CPANEL_SOURCE = 0;
+my $IS_PLESK         = 0;
+my $IS_PLESK_SMB10   = 0;
+my $IS_ENSIM         = 0;
+my $IS_DA            = 0;
 
 my $SRC_PANEL;              # cPanel, Ensim, DirectAdmin, Plesk8, Plesk10SMB, etc.
 my $SRC_PANEL_NOVERSION;    # cPanel, Ensim, DirectAdmin, Plesk
@@ -188,7 +190,7 @@ my $TICKET    = get_ticket();
 my $CPMIGUSER = 'cpmig' . $TICKET;
 
 if ( $OPTS->{'createkeys'} ) {
-    die "create-keys should only be run on the cPanel destination host.\n" unless $IS_CPANEL;
+    die "create-keys should only be run on the cPanel destination host.\n" unless $IS_CPANEL_DEST;
     create_cpmig_keypair( $CPMIGUSER, $TICKET );
     exit;
 }
@@ -258,7 +260,7 @@ unless ( $OPTS->{'inputfile'} ) {
     print "  * Is more space being used on the source than what is available on the destination?\n";
     print "  * If there's, say, 50GB free on the source, the largest account that can be copied is a little less than 25GB (half of 50)\n";
 
-    if ( $IS_PLESK == 1 ) {
+    if ($IS_PLESK) {
         print "  * Plesk stores users' data under /var [ /var/www/vhosts/\${DOMAIN}/ ] [ /var/qmail/mailnames/\${DOMAIN}/ ] [ /var/lib/mysql ]\n";
         if ( $^O =~ /freebsd/i ) {
             print "  * commonly, customers with FreeBSD will have different locations for their services\n"
@@ -268,7 +270,7 @@ unless ( $OPTS->{'inputfile'} ) {
     }
 }
 
-if ( $IS_CPANEL == 1 and -f '/var/cpanel/transfers_devel' ) {
+if ( $IS_CPANEL_DEST and -f '/var/cpanel/transfers_devel' ) {
     print "\n\n!! /var/cpanel/transfers_devel exists! Server may be using _DEVEL migrations scripts !!\n";
 }
 
@@ -371,8 +373,15 @@ sub get_control_panel_and_set_prefix {    ## no critic (ExcessComplexity)
 
     # CPANEL
     if ( -f '/usr/local/cpanel/cpanel' ) {    ## no critic (CascadingIfElse)
-        $PREFIX = $OPTS->{'cpanelsource'} ? 's:cPanel:' : 'd:';
         $IS_CPANEL = 1;
+        if ( $OPTS->{'cpanelsource'} ) {
+            $PREFIX           = 's:cPanel:';
+            $IS_CPANEL_SOURCE = 1;
+        }
+        else {
+            $PREFIX         = 'd:';
+            $IS_CPANEL_DEST = 1;
+        }
     }
 
     # PLESK
@@ -440,10 +449,10 @@ sub get_control_panel_and_set_prefix {    ## no critic (ExcessComplexity)
         die "[!] Unknown control panel\n";
     }
 
-    print_news_cpanel() if ( $IS_CPANEL == 1 );
-    print_news_plesk()  if ( $IS_PLESK == 1 or $IS_PLESK_SMB10 == 1 );
-    print_news_ensim()  if ( $IS_ENSIM == 1 );
-    print_news_da()     if ( $IS_DA == 1 );
+    print_news_cpanel() if ($IS_CPANEL);
+    print_news_plesk()  if ( $IS_PLESK or $IS_PLESK_SMB10 );
+    print_news_ensim()  if ($IS_ENSIM);
+    print_news_da()     if ($IS_DA);
     return;
 }
 
@@ -454,7 +463,7 @@ sub check_trueuserdomains {
     my $max_age     = 30;                                                                                               #minutes
     my $skip_update = 0;
 
-    if ( $IS_CPANEL == 0 ) {
+    unless ($IS_CPANEL) {
         if ( -f $tud ) {
             my $age = int( ( time() - ( stat(_) )[9] ) / 60 );
             die("${tud} exists, but unable to determine modification time!\n\n") unless defined($age);
@@ -475,21 +484,21 @@ sub check_trueuserdomains {
                 }
             }
         }
+    }
+    unless ($IS_CPANEL_DEST) {
         if ( -f $tud and -z _ ) {
             die "\n${tud} exists, but is empty!\n\n";
         }
+        if ( not -f $tud or not -f $dip ) {
+            die "\n${tud} OR ${dip} missing!\nUse updateuserdomains to generate them.\n\n";
+        }
     }
-
-    if ( not -f $tud or not -f $dip ) {
-        die "\n${tud} OR ${dip} missing!\nUse updateuserdomains to generate them.\n\n";
-    }
-
     print "\n";
     return;
 }
 
 sub check_destination_var_usage {
-    return if $IS_CPANEL == 0;
+    return unless $IS_CPANEL_DEST;
 
     my $var_usage;
     if ( open my $df_fh, '-|', '/bin/df', '-hP', '/var' ) {
@@ -527,20 +536,20 @@ sub verify_mysql_connectivity {
             print "Could not connect to MySQL (query failed: mysql -e 'select 1').\n";
             print "/root/.my.cnf already exists. Inspect it manually.\n";
 
-            if ( $IS_PLESK == 1 && version_compare( $PLESK_MAJOR_VERSION . "." . $PLESK_MINOR_VERSION, '>=', '10.2' ) ) {
+            if ( $IS_PLESK and version_compare( $PLESK_MAJOR_VERSION . "." . $PLESK_MINOR_VERSION, '>=', '10.2' ) ) {
                 print "Hint: try user 'admin' and the password from /usr/local/psa/bin/admin --show-password OR the contents of /etc/psa/.psa.shadow.\n";
             }
-            elsif ( $IS_PLESK == 1 or $IS_PLESK_SMB10 == 1 ) {
+            elsif ( $IS_PLESK or $IS_PLESK_SMB10 ) {
                 print "Hint: try user 'admin' and the contents of /etc/psa/.psa.shadow.\n";
             }
-            elsif ( $IS_DA == 1 ) {
+            elsif ($IS_DA) {
                 print "Hint: try the credentials from /usr/local/directadmin/conf/mysql.conf .\n";
             }
-            elsif ( $IS_ENSIM == 1 ) {
+            elsif ($IS_ENSIM) {
                 print "Hint: try with the user 'root' and the password from this command:\n";
                 print 'ensim-python -c "import sys ; sys.path.append(\'/usr/lib/opcenter/mysql\') ; import mysqlbe ; print mysqlbe.read_mysqlpass()"' . "\n";
             }
-            elsif ( $IS_CPANEL == 1 ) {
+            elsif ($IS_CPANEL) {
                 print "Hint: try with mysql user 'root' and the server's root password.\n";
             }
             else {
@@ -552,14 +561,14 @@ sub verify_mysql_connectivity {
         # If /root/.my.cnf does not exist, attempt to create it unless the server uses cPanel
         else {
             print "Could not connect to MySQL (/root/.my.cnf does not exist).";
-            if ( $IS_CPANEL == 1 ) {
+            if ($IS_CPANEL) {
                 print "\n";
             }
             else {
                 print "Trying to create /root/.my.cnf now.\n";
             }
             umask 0077;    # so /root/.my.cnf is 0600
-            if ( $IS_PLESK == 1 or $IS_PLESK_SMB10 == 1 ) {
+            if ( $IS_PLESK or $IS_PLESK_SMB10 ) {
                 if ( -e '/etc/psa/.psa.shadow' ) {
                     open my $psa_fh, '<', '/etc/psa/.psa.shadow' or die "$!\n";
                     chomp( my $mysql_password = readline($psa_fh) );
@@ -578,7 +587,7 @@ sub verify_mysql_connectivity {
                     die "Attempted to obtain mysql password from /etc/psa/.psa.shadow, but it does not appear to exist\n";
                 }
             }
-            elsif ( $IS_DA == 1 ) {
+            elsif ($IS_DA) {
                 if ( -e '/usr/local/directadmin/conf/mysql.conf' ) {
                     open my $mysqlconf_fh, '<', '/usr/local/directadmin/conf/mysql.conf' or die "$!\n";
 
@@ -603,7 +612,7 @@ sub verify_mysql_connectivity {
                     die "Attempted to obtain mysql password from /usr/local/directadmin/conf/mysql.conf, but it does not appear to exist\n";
                 }
             }
-            elsif ( $IS_ENSIM == 1 ) {
+            elsif ($IS_ENSIM) {
                 chomp( my $mysql_password = `ensim-python -c "import sys ; sys.path.append('/usr/lib/opcenter/mysql') ; import mysqlbe ; print mysqlbe.read_mysqlpass()"` );
                 if ( !$mysql_password ) {
                     die 'Unable to determine mysql pass via this command: ' . "ensim-python -c \"import sys ; sys.path.append('/usr/lib/opcenter/mysql') ; import mysqlbe ; print mysqlbe.read_mysqlpass()\"\n";
@@ -614,7 +623,7 @@ sub verify_mysql_connectivity {
                     close $mycnf_fh;
                 }
             }
-            elsif ( $IS_CPANEL == 1 ) {
+            elsif ($IS_CPANEL) {
                 die "You will need to manually create /root/.my.cnf\n";
             }
             else {
@@ -993,7 +1002,8 @@ sub print_number_of_accounts {
         chomp( $account_num = `sort -u /etc/trueuserdomains | wc -l` );
     }
     else {
-        die '/etc/trueuserdomains missing!';
+        die '/etc/trueuserdomains missing!' unless $IS_CPANEL_DEST;
+        $account_num = 0;
     }
 
     print_format( 'Accounts', $account_num );
@@ -1017,7 +1027,7 @@ sub print_dedicated_ipaddrs {
     $result = scalar(@usedips) . " Used";
 
     # Get Free Count if cPanel
-    if ( $IS_CPANEL == 1 ) {
+    if ($IS_CPANEL_DEST) {
         my $cmd = `/scripts/ipusage`;
         my @ipusage = split( "\n", $cmd );
         foreach (@ipusage) {
@@ -1086,7 +1096,7 @@ sub get_mysql_auth {
     my $data            = {};
     my $my_cnf_path     = '/root/.my.cnf';
     my $psa_shadow_path = '/etc/psa/.psa.shadow';
-    if ( $IS_CPANEL == 1 ) {
+    if ($IS_CPANEL) {
         if ( -f $my_cnf_path ) {
             my $mycnf;
             if ( open( my $mycnf_fh, '<', $my_cnf_path ) ) {
@@ -1115,7 +1125,7 @@ sub get_mysql_auth {
             die('/root/.my.cnf missing');
         }
     }
-    elsif ( $IS_PLESK == 1 or $IS_PLESK_SMB10 == 1 ) {
+    elsif ( $IS_PLESK or $IS_PLESK_SMB10 ) {
         if ( -f $psa_shadow_path ) {
             my $psa;
             if ( open( my $psa_fh, '<', $psa_shadow_path ) ) {
@@ -1132,7 +1142,7 @@ sub get_mysql_auth {
             die( $psa_shadow_path . '  missing' );
         }
     }
-    elsif ( $IS_ENSIM == 1 ) {
+    elsif ($IS_ENSIM) {
         my @python_binaries = qw( ensim-python python python2 python2.1 python2.4 );
 
         for my $python_binary (@python_binaries) {
@@ -1147,7 +1157,7 @@ sub get_mysql_auth {
         chomp( $data->{'pass'} );
         $data->{'user'} = 'root';
     }
-    elsif ( $IS_DA == 1 ) {
+    elsif ($IS_DA) {
         if ( -f "/usr/local/directadmin/conf/mysql.conf" ) {
             if ( open( my $fh, '<', "/usr/local/directadmin/conf/mysql.conf" ) ) {
                 while ( my $line = <$fh> ) {
@@ -1249,7 +1259,7 @@ sub psqlcmd {
 sub get_psql_auth {
     my $data        = {};
     my $pgpass_path = '/root/.pgpass';
-    if ( $IS_CPANEL == 1 ) {
+    if ($IS_CPANEL) {
         if ( -f $pgpass_path ) {
             my $mycnf;
             if ( open( my $pgpass_fh, '<', $pgpass_path ) ) {
@@ -1272,7 +1282,7 @@ sub get_psql_auth {
             $data->{'pass'} = "";
         }
     }
-    if ( $IS_PLESK == 1 or $IS_PLESK_SMB10 == 1 ) {
+    if ( $IS_PLESK or $IS_PLESK_SMB10 ) {
         my $line = sqlcmd("use psa; SELECT admin_login, admin_password FROM DatabaseServers WHERE type='postgresql'");
         my ( $user, $pass ) = split /\s+/, $line;
         $data->{'user'} = $user;
@@ -1484,7 +1494,7 @@ sub _get_trueuserdomains_hashrefs {
     my $tud = '/etc/trueuserdomains';
     my $tud_by_user_ref;
     my $tud_by_domain_ref;
-    die "${tud} does not exist!\n" unless -f $tud;
+    die "${tud} does not exist!\n" if not -f $tud and not $IS_CPANEL_DEST;
     if ( open my $tud_fh, '<', $tud ) {
         while (<$tud_fh>) {
             chomp;
@@ -1500,7 +1510,7 @@ sub _get_trueuserdomains_hashrefs {
         close $tud_fh;
     }
     else {
-        die "Could not open ${tud}: $!\n";
+        die "Could not open ${tud}: $!\n" unless $IS_CPANEL_DEST;
     }
     return $tud_by_user_ref, $tud_by_domain_ref;
 }
@@ -1685,7 +1695,7 @@ sub print_prefixed_reseller_username_conflicts {
 }
 
 sub print_prefixed_user_config_problems {
-    if ( $IS_DA == 1 ) {
+    if ($IS_DA) {
         my $configdir = '/usr/local/directadmin/data/users';
         if ( opendir my $dh, $configdir ) {
             for ( readdir $dh ) {
@@ -1717,10 +1727,10 @@ sub print_prefixed_php_information {
         $ini{'parsed'} = 'php_output';
     }
     else {
-        if ( $IS_PLESK == 1 or $IS_PLESK_SMB10 == 1 or $IS_ENSIM == 1 ) {
+        if ( $IS_PLESK or $IS_PLESK_SMB10 or $IS_ENSIM ) {
             $phpini = '/etc/php.ini';
         }
-        elsif ( $IS_DA == 1 or ( $IS_CPANEL == 1 and not -e '/etc/cpanel/ea4/is_ea4' ) ) {
+        elsif ( $IS_DA or ( $IS_CPANEL and not -e '/etc/cpanel/ea4/is_ea4' ) ) {
             $phpini = '/usr/local/lib/php.ini';
         }
         if ( defined($phpini) && open my $file_fh, '<', $phpini ) {
@@ -1767,7 +1777,7 @@ sub print_prefixed_php_information {
 }
 
 sub print_prefixed_cpanel_eula_accepted_check {
-    return if ( $IS_CPANEL != 1 );
+    return unless $IS_CPANEL;
 
     my @dir_contents;
 
@@ -1788,7 +1798,7 @@ sub print_prefixed_cpanel_eula_accepted_check {
 }
 
 sub print_prefixed_mysql_username_conflict_info {
-    return if ( $IS_PLESK == 0 and $IS_PLESK_SMB10 == 0 );
+    return unless $IS_PLESK or $IS_PLESK_SMB10;
 
     my ( $user, $domain );
     my %mysql_layout;
@@ -1833,7 +1843,7 @@ sub print_prefixed_mysql_username_conflict_info {
 }
 
 sub print_prefixed_mysql_openfileslimit {
-    return if ( $IS_CPANEL == 0 );
+    return unless $IS_CPANEL_DEST;
 
     # open_files_limit is auto-scaled with the Transfer Tool in 11.44+, but not when using /scripts/restorepkg
     # I want to re-enable this in the future if restorepkg is fixed to do this, but for now we need to keep checking.
@@ -1847,7 +1857,7 @@ sub print_prefixed_mysql_openfileslimit {
 }
 
 sub print_prefixed_mysql_skip_networking {
-    return if ( $IS_CPANEL == 0 );
+    return unless $IS_CPANEL_DEST;
 
     my $my_cnf = '/etc/my.cnf';
 
@@ -1868,7 +1878,7 @@ sub print_prefixed_mysql_old_style_passwords_info {
     ## if the source is using old_passwords=1 and the destination server is using MySQL >= 5.6,
     ## MySQL data may not restore properly
 
-    return if ( $IS_CPANEL == 1 );
+    return if $IS_CPANEL_DEST;
 
     my $my_cnf = '/etc/my.cnf';
 
@@ -1886,7 +1896,7 @@ sub print_prefixed_mysql_old_style_passwords_info {
 }
 
 sub print_prefixed_dns_clustering_info {
-    return unless $IS_CPANEL and $OPTS->{'cpanelsource'} and -e '/var/cpanel/useclusteringdns';
+    return unless $IS_CPANEL_SOURCE and -e '/var/cpanel/useclusteringdns';
 
     my $cluster_dir = '/var/cpanel/cluster/root/config/';
     my @dir_contents;
@@ -1933,7 +1943,7 @@ sub print_plesk_duplicate_email_users {
 
     # Plesk allowed creation of duplicate mixed-case email addresses, this reports those.
     # Prior to case FB-75913 mixed-case addresses were skipped entirely, but now we will copy a mixed-case address as all-lowercase if one doesn't already exist
-    return if ( $IS_PLESK == 0 and $IS_PLESK_SMB10 == 0 );
+    return unless $IS_PLESK or $IS_PLESK_SMB10;
 
     my $maildir = '/var/qmail/mailnames';
     return if !-d $maildir;
@@ -1994,7 +2004,7 @@ sub print_reseller_username_conflicts {
 
     # Case FB-76677 - [Plesk] If a reseller has a domain, copy it instead of making a "psa-reseller-$cpuser.invalid" domain
     # This was addressed by adding --reseller and --no-reseller options to pkgacct-pXa, so we still need to know which reseller usernames conflict with system usernames so they can be handled appropriately.
-    return unless ( $IS_PLESK == 1 or $IS_PLESK_SMB10 == 1 );
+    return unless $IS_PLESK or $IS_PLESK_SMB10;
     my @plesk_resellers;
 
     my @reseller_query = `mysql -BN psa -e 'select login, type from clients'`;
@@ -3045,7 +3055,7 @@ sub print_parsed_phpini_items {    ## no critic (ManyArgs)
 }
 
 sub print_htype_fwd {
-    return if ( not $IS_PLESK == 1 and not $IS_PLESK_SMB10 == 1 );
+    return unless $IS_PLESK or $IS_PLESK_SMB10;
 
     my @htype_fwd = `mysql psa -Be 'SELECT domains.name, domains.htype AS hosttype, forwarding.redirect AS target FROM domains, forwarding WHERE domains.id = forwarding.dom_id'`;
     if (@htype_fwd) {
@@ -3069,7 +3079,7 @@ sub print_htype_fwd {
 }
 
 sub print_htype_none {
-    return if ( not $IS_PLESK == 1 and not $IS_PLESK_SMB10 == 1 );
+    return unless $IS_PLESK or $IS_PLESK_SMB10;
 
     my @htype_none = `mysql psa -Be 'SELECT domains.name, domains.htype AS hosting FROM domains WHERE htype = "none"'`;
     if (@htype_none) {
@@ -3267,7 +3277,7 @@ sub check_for_hacked_server_touchfile {
 
 sub auto_create_keypair {
     my ( $user, $ticket ) = @_;
-    return unless $IS_CPANEL;
+    return unless $IS_CPANEL_DEST;
     return if !$user;
     return if !$ticket;
     my $privkey_file = "/root/.ssh/id_" . $user;
