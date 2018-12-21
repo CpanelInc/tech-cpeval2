@@ -1,21 +1,19 @@
 PROJECT=cpeval2
 SHELL=/bin/sh
-PATH=/usr/local/cpanel/3rdparty/perl/526/bin:/usr/local/cpanel/3rdparty/perl/524/bin:/usr/local/cpanel/3rdparty/bin:/sbin:/bin:/usr/sbin:/usr/bin
-PERLCRITIC=perlcritic
+PERL_BIN=$(shell readlink /usr/local/cpanel/3rdparty/bin/perl)
+PERL_BIN_BASE=$(shell dirname $(PERL_BIN))
+PATH=$(PERL_BIN_BASE):/usr/local/cpanel/3rdparty/bin:/sbin:/bin:/usr/sbin:/usr/bin
+PERLCRITIC=$(PERL_BIN_BASE)/perlcritic
 PERLCRITICRC=tools/.perlcriticrc
-PERLTIDY=perltidy
+PERLTIDY=$(PERL_BIN_BASE)/perltidy
 PERLTIDYRC=tools/.perltidyrc
-EMPTY=
 NEW_VER=$(shell grep 'my $$VERSION' $(PROJECT) | awk '{print $$4}' | sed -e "s/'//g" -e 's/;//')
-NEW_SHASUM_CMD=shasum -a 512 $(PROJECT) | awk '{print $$1}'
-NEW_SHASUM_SEPARATOR=$(EMPTY)    #4 spaces - Make strips leading/trailing spaces unless protected.
-NEW_SHASUM_SUFFIX=$(NEW_SHASUM_SEPARATOR)cpeval2 $(NEW_VER)
 
 .DEFAULT: help
 .IGNORE: clean
 .PHONY: clean commit final help test tidy
 .PRECIOUS: $(PROJECT)
-.SILENT: commit final help SHA512SUM $(PROJECT).tdy test tidy
+.SILENT: commit final help $(PROJECT).tdy test tidy
 
 # A line beginning with a double hash mark is used to provide help text for the target that follows it when running 'make help' or 'make'.  The help target must be first.
 # "Invisible" targets should not be marked with help text.
@@ -47,19 +45,10 @@ endif
 	git commit -m "$(COMMITMSG)"
 
 ## Make final commit
-final: SHA512SUM
-	git add $(PROJECT) SHA512SUM
+final:
+	git add $(PROJECT)
 	git commit -m "$(PROJECT) $(NEW_VER)"
 	echo 'Ready to git push to origin!'
-
-## Add new version to SHA512SUM file
-SHA512SUM: tidy
-	if ( egrep -q '$(NEW_VER)$$' SHA512SUM ); then \
-		echo "Version $(NEW_VER) already exists in SHA512SUM!"; \
-		exit 2; \
-	else \
-		sed -i '1i$(shell $(NEW_SHASUM_CMD))$(NEW_SHASUM_SUFFIX)' SHA512SUM && echo "Updated SHA512SUM"; \
-	fi
 
 $(PROJECT).tdy: $(PROJECT)
 	which $(PERLTIDY) | egrep -q '/usr/local/cpanel' || echo "cPanel perltidy not found!  Are you running this on a WHM 64+ system?"

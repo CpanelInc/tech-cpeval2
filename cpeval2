@@ -148,7 +148,7 @@ use POSIX qw( strftime );
 use Term::ANSIColor qw(:constants);
 $Term::ANSIColor::AUTORESET = 1;
 
-my $VERSION = '1.39';
+my $VERSION = '1.40';
 
 my $OPTS = opts_get();
 
@@ -2414,12 +2414,13 @@ sub print_parsed_php_info {
                 7 => {
                     minor => {
                         0 => '7.0',
-                        1 => '7.1'
+                        1 => '7.1',
+                        2 => '7.2',
                     },
                 }
             },
-            supported    => '5.4, 5.5, 5.6, 7.0, and 7.1',
-            supported_es => '5.4, 5.5, 5.6, 7.0, y 7.1'      #ES
+            supported    => '5.4, 5.5, 5.6, 7.0, 7.1, and 7.2',
+            supported_es => '5.4, 5.5, 5.6, 7.0, 7.1, y 7.2'      #ES
         );
     }
     else {
@@ -2434,8 +2435,8 @@ sub print_parsed_php_info {
                     },
                 }
             },
-            supported    => '5.3, 5.4, 5.5, and 5.6 (using EasyApache 3, PHP 7.0 and 7.1 are available in EasyApache 4)',
-            supported_es => '5.3, 5.4, 5.5, y 5.6 (utilizando EasyApache 3. PHP 7.0 and 7.1 son disponibles en EasyApache 4)'    #ES
+            supported    => '5.3, 5.4, 5.5, and 5.6 (using EasyApache 3. PHP 7.0, 7.1, and 7.2 are available in EasyApache 4)',
+            supported_es => '5.3, 5.4, 5.5, y 5.6 (utilizando EasyApache 3. PHP 7.0, 7.1, y 7.2 son disponibles en EasyApache 4)'    #ES
         );
     }
 
